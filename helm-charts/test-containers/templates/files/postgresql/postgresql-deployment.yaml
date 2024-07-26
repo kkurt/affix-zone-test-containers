@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "postgresql"
+  namespace: {{ .Values.namespace}}
+  labels:
+    app: "postgres"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "postgres"
+  template:
+    metadata:
+      labels:
+        app: "postgres"
+    spec:
+      containers:
+        - name: postgresql
+          image: "bitnami/postgresql"
+          env:
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                  secretKeyRef:
+                    name: postgresql
+                    key: postgresql-password
+          ports:
+            - name: postgresql
+              containerPort: {{ .Values.db.postgresql.port }}
+          volumeMounts:
+            - name: data
+              mountPath: /bitnami/postgresql
+              readOnly: false
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgresql
+        - name: init-scripts
+          configMap:
+            name: postgresql-init-scripts
+        - name: postgresql-pg-hba-file
+          configMap:
+            name: postgresql-pg-hba-file

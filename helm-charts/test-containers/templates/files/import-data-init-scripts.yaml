@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: import-data-init-scripts
+data:
+  postgres-init-test-db.sql: |
+    CREATE DATABASE test;
+    CREATE USER test WITH ENCRYPTED PASSWORD 'test';
+    GRANT ALL PRIVILEGES ON DATABASE test TO test;
+
+    \q
+  postgres-create-test-tables.sql: |
+    \c test
+
+    CREATE TABLE IF NOT EXISTS name_basics (
+                                               nconst TEXT PRIMARY KEY,
+                                               primaryName TEXT,
+                                               birthYear TEXT,
+                                               deathYear TEXT,
+                                               primaryProfession TEXT,
+                                               knownForTitles TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS title_ratings (
+                                                 tconst TEXT PRIMARY KEY,
+                                                 averageRating NUMERIC,
+                                                 numVotes INT
+    );
+
+    \q
+  postgres-import-datasets.sql: |
+    \c test
+    \copy title_ratings FROM '/tmp/title.ratings.tsv' WITH (FORMAT csv, DELIMITER E'\t', HEADER true);
+    \copy name_basics FROM '/tmp/name.basics.tsv' WITH (FORMAT csv, DELIMITER E'\t', HEADER true);
+    \q
+

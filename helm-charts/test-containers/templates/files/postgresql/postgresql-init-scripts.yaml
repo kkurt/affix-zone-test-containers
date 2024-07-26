@@ -7,17 +7,19 @@ data:
     #!/bin/bash
     set -e
     echo "Running initdb.sh"
-
     # Wait for PostgreSQL to start
+    POSTGRES_HOST=localhost
+    POSTGRES_USER=postgres
+    POSTGRES_DB=postgres
+    POSTGRES_PASSWORD=1234
 
-    until pg_isready
+    until pg_isready -h $POSTGRES_HOST -U $POSTGRES_USER
     do
       echo "Waiting for PostgreSQL..."
       sleep 2
     done
 
-    # Temporarily set PGPASSWORD for initial connection
-    export PGPASSWORD=${POSTGRES_PASSWORD}
+    echo "PostgreSQL init-script started!"
 
-    # Run the SQL script
-    psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -f /docker-entrypoint-initdb.d/init.sql
+
+    echo "PostgreSQL init-script done!"

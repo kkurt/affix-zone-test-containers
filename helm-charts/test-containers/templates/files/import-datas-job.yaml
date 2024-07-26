@@ -1,0 +1,76 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "affix-zone-dataset-import-job"
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      containers:
+        - name: post-install-job
+          image: alpine
+          command: ["sh", "-ec"]
+          env:
+            - name: CREATE_TEST_TABLES
+              value: {{.Values.db.postgresql.init.testdb.create | quote}}
+            - name: IMPORT_DATA_SETS
+              value: {{.Values.db.postgresql.init.testdb.import | quote}}
+          args:
+            - |
+
+              echo "==================>  Importing Datasets <=================="
+              POSTGRES_HOST=postgresql
+              POSTGRES_USER=postgres
+              POSTGRES_DB=postgres
+              POSTGRES_PASSWORD=1234
+
+              apk add wget postgresql-client
+
+              until pg_isready -h $POSTGRES_HOST -U $POSTGRES_USER
+              do
+              echo "Waiting for PostgreSQL..."
+              sleep 2
+              done
+
+              export PGPASSWORD=${POSTGRES_PASSWORD}
+
+
+              #wget -O /tmp/name.basics.tsv.gz https://datasets.imdbws.com/name.basics.tsv.gz
+              wget -O /tmp/title.ratings.tsv.gz https://datasets.imdbws.com/title.ratings.tsv.gz
+
+              cd /tmp
+              #gunzip name.basics.tsv.gz
+              gunzip title.ratings.tsv.gz
+              ls -alrt
+
+              psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -f /init-scripts/postgres-init-test-db.sql
+
+              if [ "$CREATE_TEST_TABLES" = true ]; then
+                echo "PostgreSQL test db oluşturuluyor..."
+                psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -f /init-scripts/postgres-create-test-tables.sql
+                echo "PostgreSQL test db oluşturuldu..."
+              fi
+
+              if [ "$IMPORT_DATA_SETS" = true ]; then
+                echo "PostgreSQL test db datasetler import ediliyor..."
+                psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -f /init-scripts/postgres-import-datasets.sql
+                echo "PostgreSQL test db datasetler import edildi..."
+              fi
+
+
+
+              echo "==================>  Done <=================="
+          volumeMounts:
+            - name: import-data-init-scripts
+              mountPath: /init-scripts
+      restartPolicy: Never
+      volumes:
+        - name: import-data-init-scripts
+          configMap:
+            name: import-data-init-scripts
+
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
