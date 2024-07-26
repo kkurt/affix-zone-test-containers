@@ -11,7 +11,7 @@ data:
     \q
   postgres-create-test-tables.sql: |
     \c test
-
+{{ if .Values.db.postgresql.init.testdb.import.namebasics }}
     CREATE TABLE IF NOT EXISTS name_basics (
                                                nconst TEXT PRIMARY KEY,
                                                primaryName TEXT,
@@ -20,17 +20,14 @@ data:
                                                primaryProfession TEXT,
                                                knownForTitles TEXT
     );
-
+    \copy name_basics FROM '/tmp/name.basics.tsv' WITH (FORMAT csv, DELIMITER E'\t', HEADER true, NULL '\N');
+{{ end }}
+{{ if .Values.db.postgresql.init.testdb.import.titleratings }}
     CREATE TABLE IF NOT EXISTS title_ratings (
                                                  tconst TEXT PRIMARY KEY,
                                                  averageRating NUMERIC,
                                                  numVotes INT
     );
-
+    \copy title_ratings FROM '/tmp/title.ratings.tsv' WITH (FORMAT csv, DELIMITER E'\t', HEADER true, NULL '\N');
     \q
-  postgres-import-datasets.sql: |
-    \c test
-    \copy title_ratings FROM '/tmp/title.ratings.tsv' WITH (FORMAT csv, DELIMITER E'\t', HEADER true);
-    \copy name_basics FROM '/tmp/name.basics.tsv' WITH (FORMAT csv, DELIMITER E'\t', HEADER true);
-    \q
-
+{{ end }}

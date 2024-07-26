@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: "affix-zone-dataset-import-job"
+  name: "postgresql-dataset-import-job"
   annotations:
     "helm.sh/hook": post-install
     "helm.sh/hook-weight": "5"
@@ -16,8 +16,10 @@ spec:
           env:
             - name: CREATE_TEST_TABLES
               value: {{.Values.db.postgresql.init.testdb.create | quote}}
-            - name: IMPORT_DATA_SETS
-              value: {{.Values.db.postgresql.init.testdb.import | quote}}
+            - name: DOWNLOAD_TITLE_RATINGS
+              value: {{.Values.db.postgresql.init.testdb.import.titleratings | quote}}
+            - name : DOWNLOAD_NAME_BASICS
+              value: {{.Values.db.postgresql.init.testdb.import.namebasics | quote}}
           args:
             - |
 
@@ -37,27 +39,33 @@ spec:
 
               export PGPASSWORD=${POSTGRES_PASSWORD}
 
-
-              #wget -O /tmp/name.basics.tsv.gz https://datasets.imdbws.com/name.basics.tsv.gz
-              wget -O /tmp/title.ratings.tsv.gz https://datasets.imdbws.com/title.ratings.tsv.gz
-
               cd /tmp
-              #gunzip name.basics.tsv.gz
-              gunzip title.ratings.tsv.gz
+
               ls -alrt
+
 
               psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -f /init-scripts/postgres-init-test-db.sql
 
               if [ "$CREATE_TEST_TABLES" = true ]; then
                 echo "PostgreSQL test db oluşturuluyor..."
+
+                if [ "$DOWNLOAD_NAME_BASICS" = true ]; then
+                  echo "name_basics dataset indiriliyor..."
+                  wget -O /tmp/name.basics.tsv.gz https://datasets.imdbws.com/name.basics.tsv.gz
+                  gunzip name.basics.tsv.gz
+                  echo "name_basics dataset indirildi..."
+                fi
+
+                if [ "$DOWNLOAD_TITLE_RATINGS" = true ]; then
+                  echo "title_ratings dataset indiriliyor..."
+                  wget -O /tmp/title.ratings.tsv.gz https://datasets.imdbws.com/title.ratings.tsv.gz
+                  gunzip title.ratings.tsv.gz
+                  echo "title_ratings dataset indirildi..."
+                fi
+
                 psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -f /init-scripts/postgres-create-test-tables.sql
                 echo "PostgreSQL test db oluşturuldu..."
-              fi
 
-              if [ "$IMPORT_DATA_SETS" = true ]; then
-                echo "PostgreSQL test db datasetler import ediliyor..."
-                psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -f /init-scripts/postgres-import-datasets.sql
-                echo "PostgreSQL test db datasetler import edildi..."
               fi
 
 

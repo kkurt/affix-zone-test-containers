@@ -1,45 +1,88 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
-  name: "postgresql"
-  namespace: {{ .Values.namespace}}
-  labels:
-    app: "postgres"
+  name: "postgresql-dataset-import-job"
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": hook-succeeded
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: "postgres"
   template:
-    metadata:
-      labels:
-        app: "postgres"
     spec:
       containers:
-        - name: postgresql
-          image: "bitnami/postgresql"
+        - name: post-install-job
+          image: alpine
+          command: ["sh", "-ec"]
           env:
-            - name: POSTGRESQL_PASSWORD
-              valueFrom:
-                  secretKeyRef:
-                    name: postgresql
-                    key: postgresql-password
-          ports:
-            - name: postgresql
-              containerPort: {{ .Values.db.postgresql.port }}
+            - name: CREATE_TEST_TABLES
+              value: {{.Values.db.postgresql.init.testdb.create | quote}}
+            - name: DOWNLOAD_TITLE_RATINGS
+              value: {{.Values.db.postgresql.init.testdb.import.titleratings | quote}}
+            - name : DOWNLOAD_NAME_BASICS
+              value: {{.Values.db.postgresql.init.testdb.import.namebasics | quote}}
+          args:
+            - |
+
+              echo "==================>  Importing Datasets <=================="
+              POSTGRES_HOST=postgresql
+              POSTGRES_USER=postgres
+              POSTGRES_DB=postgres
+              POSTGRES_PASSWORD=1234
+
+              apk add wget postgresql-client
+
+              until pg_isready -h $POSTGRES_HOST -U $POSTGRES_USER
+              do
+              echo "Waiting for PostgreSQL..."
+              sleep 2
+              done
+
+              export PGPASSWORD=${POSTGRES_PASSWORD}
+
+              cd /tmp
+
+              function download_and_unzip {
+                local url=$1
+                local output=$2
+                wget -O ${output}.gz ${url}
+                gunzip ${output}.gz
+              }
+
+
+              psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -f /init-scripts/postgres-init-test-db.sql
+
+              if [ "$CREATE_TEST_TABLES" = true ]; then
+                echo "PostgreSQL test db oluşturuluyor..."
+
+                if [ "$DOWNLOAD_NAME_BASICS" = true ]; then
+                  echo "name_basics dataset indiriliyor..."
+                  download_and_unzip "https://datasets.imdbws.com/name.basics.tsv.gz" "/tmp/name.basics.tsv"
+                  echo "name_basics dataset indirildi..."
+                fi
+
+                if [ "$DOWNLOAD_TITLE_RATINGS" = true ]; then
+                  echo "title_ratings dataset indiriliyor..."
+                  download_and_unzip "https://datasets.imdbws.com/title.ratings.tsv.gz" "/tmp/title.ratings.tsv"
+                  echo "title_ratings dataset indirildi..."
+                fi
+
+                psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -f /init-scripts/postgres-create-test-tables.sql
+                echo "PostgreSQL test db oluşturuldu..."
+
+              fi
+
+
+
+              echo "==================>  Done <=================="
           volumeMounts:
-            - name: data
-              mountPath: /bitnami/postgresql
-              readOnly: false
-            - name: init-scripts
-              mountPath: /docker-entrypoint-initdb.d
+            - name: import-data-init-scripts
+              mountPath: /init-scripts
+      restartPolicy: Never
       volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: postgresql
-        - name: init-scripts
+        - name: import-data-init-scripts
           configMap:
-            name: postgresql-init-scripts
-        - name: postgresql-pg-hba-file
-          configMap:
-            name: postgresql-pg-hba-file
+            name: import-data-init-scripts
+
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+
