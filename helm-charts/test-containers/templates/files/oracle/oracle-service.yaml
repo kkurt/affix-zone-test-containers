@@ -1,0 +1,13 @@
+{{- if .Values.db.oracle.install }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: "oracle-service"
+spec:
+  type: ClusterIP
+  ports:
+    - port: 1521
+      targetPort: 1521
+  selector:
+    app: "oracle"
+{{- end }}

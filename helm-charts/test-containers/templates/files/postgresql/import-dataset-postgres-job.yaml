@@ -1,0 +1,100 @@
+{{- if .Values.db.postgresql.install }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "postgresql-dataset-import-job"
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      containers:
+        - name: post-install-job
+          image: alpine
+          command: ["sh", "-ec"]
+          env:
+            - name: POSTGRES_HOST
+              value: {{ .Values.db.postgresql.domain | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.db.postgresql.root.username | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.db.postgresql.root.database | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.db.postgresql.root.password | quote }}
+            - name: CREATE_TEST_TABLES
+              value: {{ .Values.db.postgresql.init.testdb.create | quote }}
+            - name: IMPORT_FILES
+              value: {{ .Values.db.postgresql.init.testdb.importFiles | toJson |  quote }}
+            - name: TEST_DB_NAME
+              value: test
+          args:
+            - |
+              echo "==================>  Importing Datasets <=================="
+
+              # Install necessary packages
+              apk add --no-cache wget postgresql-client jq
+
+              # Debugging output to verify environment variables
+              echo "POSTGRES_HOST is $POSTGRES_HOST"
+              echo "POSTGRES_USER is $POSTGRES_USER"
+              echo "POSTGRES_DB is $POSTGRES_DB"
+
+              # Wait for PostgreSQL to be ready
+              until pg_isready -h "$POSTGRES_HOST" -U "$POSTGRES_USER"; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+
+              export PGPASSWORD=${POSTGRES_PASSWORD}
+
+              cd /tmp
+
+              # Function to download and unzip files
+              function download_and_unzip {
+                local url=$1
+                local output=$2
+                wget -O ${output} ${url}
+                gunzip ${output}
+              }
+
+              # Handle table creation and data import
+              if [ "$CREATE_TEST_TABLES" = "true" ]; then
+                echo "PostgreSQL test db oluşturuluyor..."
+
+                # Process each file entry
+                echo "Decoded IMPORT_FILES:"
+                echo "$IMPORT_FILES" | jq -c '.[]' | while read -r file; do
+                  import=$(echo ${file} | jq -r ".import") # new added, should check if it is false loop should continue
+
+                  if [ "$import" = "false" ]; then
+                      continue
+                  fi
+
+                  name=$(echo ${file} | jq -r ".name")
+                  url=$(echo ${file} | jq -r ".url")
+                  script=$(echo ${file} | jq -r ".script")
+
+                  echo "Processing ${name}..."
+                  download_and_unzip ${url} ${name}
+                  echo "${name} downloaded and unzipped."
+
+                  # Execute SQL script
+                  echo "Executing script for ${name}..."
+                  echo "${script}" > /tmp/temp_script.sql
+                  cat /tmp/temp_script.sql # Debug: output the script
+                  psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $TEST_DB_NAME -f /tmp/temp_script.sql
+
+                  # Clean up the temporary script file
+                  rm /tmp/temp_script.sql
+                done
+
+                echo "PostgreSQL test db creation and data import complete."
+              fi
+
+              echo "==================>  Done <=================="
+      restartPolicy: Never
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+{{- end }}

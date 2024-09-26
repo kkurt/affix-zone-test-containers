@@ -1,0 +1,51 @@
+{{- if .Values.db.oracle.install }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oracle
+  labels:
+    app: oracle
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oracle
+  template:
+    metadata:
+      labels:
+        app: oracle
+    spec:
+      securityContext:
+        runAsUser: 54321    # Oracle User
+        runAsGroup: 54321   # Oinstall group
+        fsGroup: 54321      # Oinstall group
+      containers:
+        - name: oracle
+          image: gvenzl/oracle-free
+          ports:
+            - name: oracle
+              containerPort: {{ .Values.db.oracle.port }}
+              hostPort: {{ .Values.db.oracle.port }}
+          env:
+            - name: ORACLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secret
+                  key: oracle-password
+            - name: APP_USER
+              value: {{ .Values.db.oracle.users.test.username | quote}}
+            - name: APP_USER_PASSWORD
+              value: {{ .Values.db.oracle.users.test.password | quote}}
+          volumeMounts:
+            - name: oracle-volume
+              mountPath: /opt/oracle/oradata
+            - name: oracle-init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: oracle-volume
+          persistentVolumeClaim:
+            claimName: oracle-pvc
+        - name: oracle-init-scripts
+          configMap:
+            name: oracle-init-scripts
+{{- end }}

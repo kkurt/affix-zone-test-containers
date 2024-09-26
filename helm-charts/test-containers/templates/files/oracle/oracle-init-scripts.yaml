@@ -1,0 +1,57 @@
+{{- if .Values.db.oracle.install }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oracle-init-scripts
+data:
+  init-db.sh: |
+    #!/bin/bash
+    set -e
+    echo "Oracle init-script started!"
+    echo "Waiting for Oracle to start..."
+
+    ORACLE_HOST={{ .Values.db.oracle.serviceName }}
+    ORACLE_PORT={{ .Values.db.oracle.port }}
+    ORACLE_USER={{ .Values.db.oracle.users.test.username }}
+    ORACLE_PASSWORD={{ .Values.db.oracle.users.test.password }}
+    ORACLE_SERVICE={{ .Values.db.oracle.oracleServiceName}}
+    #DATA_DIR="/opt/oracle/oradata"
+    DATA_DIR="/tmp"
+
+    #sqlplus TEST/12345@localhost:1521/FREEPDB1
+    #sqlplus SYSTEM/12345@localhost:1521/FREEPDB1
+    #CREATE OR REPLACE DIRECTORY ext_tab_dir AS '/opt/oracle/oradata';
+    #GRANT READ, WRITE ON DIRECTORY ext_tab_dir TO TEST;
+
+    until echo "exit" | sqlplus -S $ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_HOST:$ORACLE_PORT/$ORACLE_SERVICE > /dev/null
+    do
+      echo "Waiting for Oracle..."
+      sleep 2
+    done
+
+    echo "Oracle is ready!"
+
+    sqlplus {{.Values.db.oracle.users.root.username}}/{{.Values.db.oracle.users.root.password}}@$ORACLE_HOST:$ORACLE_PORT/$ORACLE_SERVICE <<EOF
+      CREATE OR REPLACE DIRECTORY ext_tab_dir AS '${DATA_DIR}';
+      GRANT READ, WRITE ON DIRECTORY ext_tab_dir TO {{.Values.db.oracle.users.test.username}};
+    EOF
+
+    # Download and process the TSV files
+    {{- range .Values.db.oracle.init.testdb.importFiles }}
+    {{- if .import }}
+    echo "Downloading {{ .name }} from {{ .url }}..."
+    curl -L -o /tmp/{{ .name }} "{{ .url }}"
+
+    echo "Extracting {{ .name }}..."
+    gunzip /tmp/{{ .name }}
+    cd /tmp
+    echo "Running {{ .name }} SQL script..."
+    sqlplus $ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_HOST:$ORACLE_PORT/$ORACLE_SERVICE <<EOF
+    {{ .script | toYaml | nindent 8 }}
+    EOF
+    echo "Script {{ .name }} executed."
+    {{- end }}
+    {{- end }}
+
+    echo "Oracle init-script completed!"
+{{- end }}

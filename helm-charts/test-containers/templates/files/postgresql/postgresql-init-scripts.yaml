@@ -1,3 +1,4 @@
+{{- if .Values.db.postgresql.install }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -13,9 +14,8 @@ data:
     POSTGRES_DB=postgres
     POSTGRES_PASSWORD=1234
 
-    until pg_isready -h $POSTGRES_HOST -U $POSTGRES_USER
-    do
-      echo "Waiting for PostgreSQL..."
+    until pg_isready -h $POSTGRES_HOST -U $POSTGRES_USER; do
+      echo "In postgresql-init-script, waiting for PostgreSQL..."
       sleep 2
     done
 
@@ -23,3 +23,9 @@ data:
 
 
     echo "PostgreSQL init-script done!"
+  postgres-init-test-db.sql: |
+    CREATE DATABASE test;
+    CREATE USER test WITH ENCRYPTED PASSWORD 'test';
+    GRANT ALL PRIVILEGES ON DATABASE test TO test;
+    \q
+{{- end }}
