@@ -15,8 +15,8 @@ data:
     ORACLE_USER={{ .Values.db.oracle.users.test.username }}
     ORACLE_PASSWORD={{ .Values.db.oracle.users.test.password }}
     ORACLE_SERVICE={{ .Values.db.oracle.oracleServiceName}}
-    #DATA_DIR="/opt/oracle/oradata"
-    DATA_DIR="/tmp"
+    DATA_DIR="/opt/oracle/oradata"
+    #DATA_DIR="/tmp"
 
     #sqlplus TEST/12345@localhost:1521/FREEPDB1
     #sqlplus SYSTEM/12345@localhost:1521/FREEPDB1
@@ -40,11 +40,12 @@ data:
     {{- range .Values.db.oracle.init.testdb.importFiles }}
     {{- if .import }}
     echo "Downloading {{ .name }} from {{ .url }}..."
-    curl -L -o /tmp/{{ .name }} "{{ .url }}"
+    curl -L -o ${DATA_DIR}/{{ .name }} "{{ .url }}"
 
+    cd ${DATA_DIR}
     echo "Extracting {{ .name }}..."
-    gunzip /tmp/{{ .name }}
-    cd /tmp
+    gunzip ${DATA_DIR}/{{ .name }}
+
     echo "Running {{ .name }} SQL script..."
     sqlplus $ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_HOST:$ORACLE_PORT/$ORACLE_SERVICE <<EOF
     {{ .script | toYaml | nindent 8 }}
