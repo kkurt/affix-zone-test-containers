@@ -7,6 +7,34 @@ data:
   init-db.sh: |
     #!/bin/bash
     set -e
+
+    # Define a function to handle errors (like a "catch" block)
+        handle_sqlldr_error() {
+        result_code=$?
+      echo "SQL*Loader exit code: $result_code"
+        if [ $result_code -eq 0 ]; then
+        echo "SQL*Loader completed successfully."
+        elif [ $result_code -eq 2 ]; then
+        echo "SQL*Loader completed with warnings."
+        elif [ $result_code -eq 3 ]; then
+        echo "SQL*Loader encountered errors."
+        elif [ $result_code -eq 4 ]; then
+        echo "SQL*Loader encountered a fatal error."
+        else
+      echo "Unknown result code: $result_code"
+        fi
+
+        # Optionally display SQL*Loader log output for debugging
+        if [ -f /tmp/sqlldr_output.log ]; then
+        cat /tmp/sqlldr_output.log
+        fi
+        if [ -f /tmp/temp_name_basics.log ]; then
+        cat /tmp/temp_name_basics.log
+        fi
+
+        exit $result_code  # Return the result code (if needed for further steps)
+      }
+
     echo "Oracle init-script started!"
     echo "Waiting for Oracle to start..."
 
@@ -15,11 +43,12 @@ data:
     ORACLE_USER={{ .Values.db.oracle.users.test.username }}
     ORACLE_PASSWORD={{ .Values.db.oracle.users.test.password }}
     ORACLE_SERVICE={{ .Values.db.oracle.oracleServiceName}}
-    DATA_DIR="/opt/oracle/oradata"
-    #DATA_DIR="/tmp"
+    #DATA_DIR="/opt/oracle/oradata"
+    DATA_DIR="/tmp"
 
     #sqlplus TEST/12345@localhost:1521/FREEPDB1
     #sqlplus SYSTEM/12345@localhost:1521/FREEPDB1
+    #sqlldr TEST/12345@localhost:1521/FREEPDB1 control=/tmp/temp_name_basics.ctl
     #CREATE OR REPLACE DIRECTORY ext_tab_dir AS '/opt/oracle/oradata';
     #GRANT READ, WRITE ON DIRECTORY ext_tab_dir TO TEST;
 
@@ -30,11 +59,6 @@ data:
     done
 
     echo "Oracle is ready!"
-
-    sqlplus {{.Values.db.oracle.users.root.username}}/{{.Values.db.oracle.users.root.password}}@$ORACLE_HOST:$ORACLE_PORT/$ORACLE_SERVICE <<EOF
-      CREATE OR REPLACE DIRECTORY ext_tab_dir AS '${DATA_DIR}';
-      GRANT READ, WRITE ON DIRECTORY ext_tab_dir TO {{.Values.db.oracle.users.test.username}};
-    EOF
 
     # Download and process the TSV files
     {{- range .Values.db.oracle.init.testdb.importFiles }}
@@ -48,8 +72,23 @@ data:
 
     echo "Running {{ .name }} SQL script..."
     sqlplus $ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_HOST:$ORACLE_PORT/$ORACLE_SERVICE <<EOF
-    {{ .script | toYaml | nindent 8 }}
+    {{ .createScript | toYaml | nindent 8 }}
     EOF
+
+    cat <<EOCONTROL > /tmp/temp_name_basics.ctl
+    {{ .loadScript | toYaml | nindent 8 }}
+    EOCONTROL
+    ls -al /tmp
+    {
+      echo "Starting SQL*Loader..."
+      sqlldr $ORACLE_USER/$ORACLE_PASSWORD@$ORACLE_HOST:$ORACLE_PORT/$ORACLE_SERVICE control=/tmp/temp_name_basics.ctl  rows=100000 errors=1000> /tmp/sqlldr_output.log 2>&1
+    } || handle_sqlldr_error  # If the command fails, run the error handler
+
+
+    # Clean up the temporary control file after execution
+    #rm temp_name_basics.log
+    #rm /tmp/temp_name_basics.ctl
+
     echo "Script {{ .name }} executed."
     {{- end }}
     {{- end }}
