@@ -37,7 +37,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: postgresql
+            claimName: postgresql-pvc
         - name: postgresql-init-scripts
           configMap:
             name: postgresql-init-scripts

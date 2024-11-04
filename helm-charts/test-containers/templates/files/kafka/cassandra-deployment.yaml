@@ -1,0 +1,45 @@
+{{- if .Values.db.cassandra.install }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cassandra
+  labels:
+    app: cassandra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cassandra
+  template:
+    metadata:
+      labels:
+        app: cassandra
+    spec:
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+        - name: cassandra
+          image: bitnami/cassandra:latest
+          ports:
+            - name: cassandra
+              containerPort: {{ .Values.db.cassandra.port }}
+          env:
+            - name: CASSANDRA_AUTHENTICATOR
+              value: "AllowAllAuthenticator" # Set to PasswordAuthenticator if authentication is required
+            - name: CASSANDRA_AUTHORIZER
+              value: "AllowAllAuthorizer" # Set to CassandraAuthorizer if authorization is required
+          volumeMounts:
+            - name: data
+              mountPath: /bitnami/cassandra
+            - name: cassandra-init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: cassandra-pvc
+        - name: cassandra-init-scripts
+          configMap:
+            name: cassandra-init-scripts
+{{- end }}

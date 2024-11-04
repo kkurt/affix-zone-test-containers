@@ -16,7 +16,7 @@ spec:
           command: ["sh", "-ec"]
           env:
             - name: POSTGRES_HOST
-              value: {{ .Values.db.postgresql.domain | quote }}
+              value: {{ .Values.db.postgresql.serviceName | quote }}
             - name: POSTGRES_USER
               value: {{ .Values.db.postgresql.root.username | quote }}
             - name: POSTGRES_DB

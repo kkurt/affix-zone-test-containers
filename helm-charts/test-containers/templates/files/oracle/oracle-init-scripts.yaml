@@ -60,6 +60,7 @@ data:
 
     echo "Oracle is ready!"
 
+    {{- if .Values.db.cassandra.init.testdb.create }}
     # Download and process the TSV files
     {{- range .Values.db.oracle.init.testdb.importFiles }}
     {{- if .import }}
@@ -90,6 +91,7 @@ data:
     #rm /tmp/temp_name_basics.ctl
 
     echo "Script {{ .name }} executed."
+    {{- end }}
     {{- end }}
     {{- end }}
 
