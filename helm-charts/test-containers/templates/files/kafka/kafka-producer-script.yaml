@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-producer-script
+data:
+  producer.py: |
+    #!/usr/bin/env python3
+
+    import uuid
+    import random
+    import string
+    import json
+    from kafka import KafkaProducer
+    import time
+
+    def generate_random_string(length=8):
+        return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+    def generate_message():
+        id = random.randint(1, 100000)
+        value = {
+            "id": id,
+            "orderId": random.randint(1, 1000),
+            "productName": "product_" + generate_random_string()
+        }
+        message = {
+            "id": id,
+            "value": value
+        }
+        return message
+
+    def main():
+        producer = KafkaProducer(
+            bootstrap_servers='kafka-service:9092',
+            key_serializer=lambda k: str(k).encode('utf-8'),
+            value_serializer=lambda v: json.dumps(v).encode('utf-8')
+        )
+
+        # Number of messages to send
+        num_messages = {{ .Values.kafka.numMessages }}
+
+        for _ in range(num_messages):
+            message = generate_message()
+            id = message["id"]
+            value = message["value"]
+            print(f"Sending message: {message}")
+            producer.send('TEST', key=str(id).encode('utf-8'), value=value)
+            time.sleep(1)
+
+        producer.flush()
+        producer.close()
+
+    if __name__ == "__main__":
+        main()

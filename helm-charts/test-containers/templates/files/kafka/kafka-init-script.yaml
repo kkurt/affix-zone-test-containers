@@ -1,0 +1,20 @@
+{{- if .Values.kafka.install }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-init-scripts
+data:
+  init-topic.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "Kafka init script started!"
+
+    KAFKA_BROKER="{{ .Values.kafka.serviceName }}:{{ .Values.kafka.port }}"
+    TEST_TOPIC="TEST"
+
+    #kafka-topics.sh --create --topic TEST --bootstrap-server kafka-service:9092 --partitions 1 --replication-factor 1
+    kafka-topics.sh --create --topic $TEST_TOPIC --bootstrap-server $KAFKA_BROKER --partitions 1 --replication-factor 1
+
+    echo "Kafka topic $TEST_TOPIC created!"
+    {{- end }}

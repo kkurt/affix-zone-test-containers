@@ -1,0 +1,17 @@
+{{- if .Values.kafka.install }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.kafka.serviceName }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: external
+      port: {{ .Values.kafka.port | int }}
+      targetPort: {{ .Values.kafka.port | int }}
+    - name: internal
+      port: 9093
+      targetPort: 9093
+  selector:
+    app: kafka
+{{- end }}

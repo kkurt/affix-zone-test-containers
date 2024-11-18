@@ -1,8 +1,8 @@
-{{- if .Values.db.cassandra.install }}
+{{- if .Values.kafka.install }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: cassandra-pvc
+  name: kafka-pvc
 spec:
   accessModes:
     - ReadWriteOnce

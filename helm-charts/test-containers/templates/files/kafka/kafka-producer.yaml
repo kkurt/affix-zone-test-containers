@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-producer-job
+spec:
+  template:
+    spec:
+      containers:
+        - name: kafka-producer
+          image: python:3.9-slim
+          command:
+            - sh
+            - -c
+            - |
+              pip install kafka-python && \
+              python /scripts/producer.py
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka-service:9092"
+          volumeMounts:
+            - name: kafka-producer-script
+              mountPath: /scripts
+      restartPolicy: OnFailure
+      volumes:
+        - name: kafka-producer-script
+          configMap:
+            name: kafka-producer-script
