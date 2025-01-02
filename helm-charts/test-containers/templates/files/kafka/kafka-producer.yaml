@@ -1,3 +1,4 @@
+{{- if .Values.kafka.install }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -25,3 +26,4 @@ spec:
         - name: kafka-producer-script
           configMap:
             name: kafka-producer-script
+{{- end }}

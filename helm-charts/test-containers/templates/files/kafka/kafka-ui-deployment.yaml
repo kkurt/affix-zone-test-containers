@@ -25,4 +25,4 @@ spec:
               value: "kafka-service:9092"
             - name: KAFKA_CLUSTERS_0_READONLY
               value: "false"
-  {{- end }}
+{{- end }}

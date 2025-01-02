@@ -39,9 +39,6 @@ data:
       echo "{{ trimSuffix "\n" .loadScript }}" | sed "s|\$FILE_PATH|${FILE_PATH}|g" | cqlsh -u $CASSANDRA_USER -p $CASSANDRA_PASSWORD
       #cqlsh -u cassandra -p cassandra -e "COPY test.title_ratings (tconst, averageRating, numVotes) FROM '/tmp/title.ratings.tsv' WITH DELIMITER='	' AND HEADER=TRUE AND NULL='\N';"
 
-
-
-
       ls -al /tmp
     {{- end }}
     {{- end }}
