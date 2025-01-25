@@ -19,6 +19,8 @@ spec:
       containers:
         - name: postgresql
           image: "bitnami/postgresql"
+          securityContext:
+            runAsUser: 0
           env:
             - name: POSTGRESQL_PASSWORD
               valueFrom:
