@@ -1,5 +1,5 @@
 namespace: "affixzone-test-containers"
-
+testPvc: false
 datasets:
     mountPath: "/datasets"
     files:
@@ -7,7 +7,7 @@ datasets:
       download: true
       url: "https://datasets.imdbws.com/title.ratings.tsv.gz"
     - name: name.basics.tsv
-      download: true
+      download: false
       url: "https://datasets.imdbws.com/name.basics.tsv.gz"
 db:
   postgresql:
@@ -72,7 +72,7 @@ db:
               primaryProfession VARCHAR2(400),
               knownForTitles VARCHAR2(400)
               );
-            loadScript:
+            loadScript: |
               LOAD DATA INFILE '{{ .Values.datasets.mountPath }}/name.basics.tsv'
               INTO TABLE name_basics
               FIELDS TERMINATED BY '\t'
@@ -92,7 +92,7 @@ db:
                 averageRating NUMERIC,
                 numVotes INT
               );
-            loadScript:
+            loadScript: |
               LOAD DATA INFILE '{{ .Values.datasets.mountPath }}/title.ratings.tsv'
               INTO TABLE title_ratings
               FIELDS TERMINATED BY '\t'
@@ -106,7 +106,7 @@ db:
     install: false
     serviceName: "cassandra-service"
     port: "9042"
-    keyspace: "test"
+    keyspace: "test"   # Note: this value now resides at .Values.db.cassandra.keyspace
     users:
       test:
         username: "cassandra"
@@ -114,28 +114,25 @@ db:
     init:
       testdb:
         create: true
-        importFiles :
-          - name: title.ratings.tsv.gz
-            import: false
-            url: "https://datasets.imdbws.com/title.ratings.tsv.gz"
+        importFiles:
+          - name: title.ratings.tsv
             createScript: |
-              CREATE KEYSPACE IF NOT EXISTS test
+              CREATE KEYSPACE IF NOT EXISTS {{ .Values.db.cassandra.keyspace }}
               WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
-              USE test;              
+              USE {{ .Values.db.cassandra.keyspace }};
               CREATE TABLE IF NOT EXISTS title_ratings (
-              tconst TEXT PRIMARY KEY,
-              averageRating FLOAT,
-              numVotes INT
+                tconst TEXT PRIMARY KEY,
+                averageRating FLOAT,
+                numVotes INT
               );
             loadScript: |
-              COPY test.title_ratings (tconst, averageRating, numVotes) FROM '$FILE_PATH' WITH DELIMITER='	' AND HEADER=TRUE AND NULL='N';
-          - name: name.basics.tsv.gz
-            import: true
-            url: "https://datasets.imdbws.com/name.basics.tsv.gz"
+              COPY {{ .Values.db.cassandra.keyspace }}.title_ratings (tconst, averageRating, numVotes) 
+              FROM '$FILE_PATH' WITH DELIMITER='	' AND HEADER=TRUE AND NULL='N';
+          - name: name.basics.tsv
             createScript: |
-              CREATE KEYSPACE IF NOT EXISTS test
+              CREATE KEYSPACE IF NOT EXISTS {{ .Values.db.cassandra.keyspace }}
               WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
-              USE test;
+              USE {{ .Values.db.cassandra.keyspace }};
               CREATE TABLE IF NOT EXISTS name_basics (
                 nconst TEXT PRIMARY KEY,
                 primaryName TEXT,
@@ -145,7 +142,8 @@ db:
                 knownForTitles TEXT
               );
             loadScript: |
-              COPY test.name_basics (nconst, primaryName, birthYear, deathYear, primaryProfession, knownForTitles)  FROM '$FILE_PATH'   WITH DELIMITER='	' AND HEADER=TRUE AND NULL='\N';
+              COPY {{ .Values.db.cassandra.keyspace }}.name_basics (nconst, primaryName, birthYear, deathYear, primaryProfession, knownForTitles)  
+              FROM '$FILE_PATH' WITH DELIMITER='	' AND HEADER=TRUE AND NULL='\N';
 
 kafka:
   install: false

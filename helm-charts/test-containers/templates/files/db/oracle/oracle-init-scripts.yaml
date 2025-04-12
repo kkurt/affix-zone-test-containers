@@ -6,70 +6,86 @@ metadata:
 data:
   init-db.sh: |
     #!/bin/bash
-    set -e
+    set -ex
 
-    # Define an error handler function for SQL*Loader
+    # Capture global context.
+    {{- $root := . -}}
+
+    # Define an error handler function for SQL*Loader.
     handle_sqlldr_error() {
       result_code=$?
       echo "SQL*Loader exit code: $result_code"
       if [ $result_code -eq 0 ]; then
         echo "SQL*Loader completed successfully."
       elif [ $result_code -eq 2 ]; then
-        echo "SQL*Loader completed with warnings."
-      elif [ $result_code -eq 3 ]; then
-        echo "SQL*Loader encountered errors."
-      elif [ $result_code -eq 4 ]; then
-        echo "SQL*Loader encountered a fatal error."
+        echo "SQL*Loader completed with warnings. Continuing."
       else
-        echo "Unknown result code: $result_code"
+        echo "SQL*Loader encountered errors (exit code $result_code). Exiting."
+        [ -f $TEMP_DIR/sqlldr_output.log ] && cat $TEMP_DIR/sqlldr_output.log
+        [ -f $TEMP_DIR/temp_name_basics.ctl ] && cat $TEMP_DIR/temp_name_basics.ctl
+        exit $result_code
       fi
-
-      # Optionally show SQL*Loader log outputs for debugging
-      [ -f /tmp/sqlldr_output.log ] && cat /tmp/sqlldr_output.log
-      [ -f /tmp/temp_name_basics.ctl ] && cat /tmp/temp_name_basics.ctl
-
-      exit $result_code
     }
 
     echo "Oracle init-script started!"
     echo "Waiting for Oracle to start..."
 
+    # Use SYSTEM (root) credentials which are generally ready earlier.
     ORACLE_HOST={{ .Values.db.oracle.serviceName }}
     ORACLE_PORT={{ .Values.db.oracle.port }}
     ORACLE_USER={{ .Values.db.oracle.users.test.username }}
     ORACLE_PASSWORD={{ .Values.db.oracle.users.test.password }}
     ORACLE_SERVICE={{ .Values.db.oracle.oracleServiceName }}
-    # Use the datasets mount path as the working directory (pre-loaded via PVC)
-    DATA_DIR="{{ .Values.datasets.mountPath }}"
 
-    # Wait until Oracle is available
-    until echo "exit" | sqlplus -S ${ORACLE_USER}/${ORACLE_PASSWORD}@${ORACLE_HOST}:${ORACLE_PORT}/${ORACLE_SERVICE} > /dev/null
-    do
-      echo "Waiting for Oracle..."
-      sleep 2
+    DATASET_PATH={{ .Values.datasets.mountPath }}
+    # Build the EZCONNECT connection string.
+    CONN_STR="//${ORACLE_HOST}:${ORACLE_PORT}/${ORACLE_SERVICE}"
+
+    # Use /tmp for temporary files; datasets are loaded via PVC.
+    TEMP_DIR="/tmp"
+
+    # Wait until Oracle is available (retry up to MAX_RETRIES).
+    RETRIES=0
+    MAX_RETRIES=12
+    until echo "exit" | sqlplus -S ${ORACLE_USER}/${ORACLE_PASSWORD}@${CONN_STR} > /dev/null 2>&1; do
+      RETRIES=$((RETRIES+1))
+      if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
+        echo "Oracle did not become available in time."
+        exit 1
+      fi
+      echo "Waiting for Oracle... attempt ${RETRIES}/${MAX_RETRIES}"
+      sleep 1
     done
 
     echo "Oracle is ready!"
 
     {{- if .Values.db.oracle.init.testdb.create }}
-    # Loop through each import file defined for Oracle
+    # Loop through each import file defined for Oracle.
     {{- range .Values.db.oracle.init.testdb.importFiles }}
-    echo "Running SQL script for {{ .name }}..."
-    sqlplus ${ORACLE_USER}/${ORACLE_PASSWORD}@${ORACLE_HOST}:${ORACLE_PORT}/${ORACLE_SERVICE} <<EOF
-    {{ .createScript | toYaml | nindent 4 }}
+      FILE_TO_IMPORT="${DATASET_PATH}/{{ .name }}"
+      echo "Processing import for file {{ .name }}..."
+      if [ -f "$FILE_TO_IMPORT" ]; then
+        echo "File $FILE_TO_IMPORT exists. Proceeding with import for {{ .name }}..."
+
+        echo "Running SQL script for {{ .name }}..."
+        sqlplus ${ORACLE_USER}/${ORACLE_PASSWORD}@${CONN_STR} <<-EOF
+{{ tpl .createScript $root | nindent 4 }}
     EOF
 
-    # Write the load control file
-    cat <<EOCONTROL > /tmp/temp_name_basics.ctl
-      {{ .loadScript | toYaml | nindent 4 }}
+    # Write the SQL*Loader control file into TEMP_DIR.
+    cat <<-EOCONTROL > "$TEMP_DIR"/temp_name_basics.ctl
+{{ tpl .loadScript $root | nindent 4 }}
     EOCONTROL
 
     echo "Starting SQL*Loader for {{ .name }}..."
-    sqlldr ${ORACLE_USER}/${ORACLE_PASSWORD}@${ORACLE_HOST}:${ORACLE_PORT}/${ORACLE_SERVICE} control=/tmp/temp_name_basics.ctl rows=100000 errors=1000 > /tmp/sqlldr_output.log 2>&1 || handle_sqlldr_error
+    sqlldr ${ORACLE_USER}/${ORACLE_PASSWORD}@${CONN_STR} control=$TEMP_DIR/temp_name_basics.ctl rows=100000 errors=1000 > $TEMP_DIR/sqlldr_output.log 2>&1 || handle_sqlldr_error
 
     echo "Import for {{ .name }} completed."
+    else
+    echo "File $FILE_TO_IMPORT does not exist. Skipping import for {{ .name }}."
+    fi
       {{- end }}
       {{- end }}
 
     echo "Oracle init-script completed!"
-{{- end }}
+  {{- end }}

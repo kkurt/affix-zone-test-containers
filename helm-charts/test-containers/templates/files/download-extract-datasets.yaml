@@ -1,10 +1,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: download-datasets
+  name: download-extract-datasets
   namespace: {{ .Values.namespace }}
   annotations:
-    helm.sh/hook-weight: "-5"
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-1"
     helm.sh/hook-delete-policy: hook-succeeded
 spec:
   template:
@@ -20,39 +21,33 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              set -e
-              echo "Installing aria2 and checking gunzip..."
+              set -ex
+              echo "Installing aria2..."
               apk add --no-cache aria2
 
               cd /data
 
-              # Check if gunzip is available; if not, download busybox to provide it.
-              if ! command -v gunzip > /dev/null 2>&1; then
-                echo "gunzip not found. Downloading BusyBox binary to provide gunzip functionality."
-                wget -O /tmp/busybox https://busybox.net/downloads/binaries/1.35.0/busybox-x86_64
-                chmod +x /tmp/busybox
-                # Define a shell function to wrap the busybox gunzip command.
-                gunzip() {
-                  /tmp/busybox gunzip "$@"
-                }
-              fi
-
-              echo "Starting dataset download and extraction..."
-
+              echo "Starting dataset downloads..."
               {{- range .Values.datasets.files }}
               {{- if .download }}
               echo "Downloading {{ .name }} from {{ .url }} ..."
-              aria2c -x 8 -s 8 -d /data -o "{{ .name }}" "{{ .url }}"
+              aria2c -x 8 -s 8 -d /data "{{ .url }}"
+              {{- end }}
+              {{- end }}
 
-              # Use a runtime shell check for ".gz" suffix
-              if echo "{{ .name }}" | grep -q '\.gz$'; then
-                echo "Extracting {{ .name }} ..."
-                gunzip -f "{{ .name }}"
-                echo "Listing files after extracting {{ .name }}:"
-                ls -l /data
-              fi
-              {{- end }}
-              {{- end }}
+              echo "Download complete. Now extracting compressed files..."
+              for file in $(find . -maxdepth 1 -type f); do
+                if echo "$file" | grep -E '\.tar\.gz$' > /dev/null; then
+                  echo "Extracting tar.gz file: $file ..."
+                  tar -xzvf "$file"
+                elif echo "$file" | grep -E '\.gz$' > /dev/null; then
+                  # Exclude tar.gz files (they were handled above)
+                  if ! echo "$file" | grep -E '\.tar\.gz$' > /dev/null; then
+                    echo "Extracting gz file: $file ..."
+                    gunzip -f "$file"
+                  fi
+                fi
+              done
 
               echo "✅ All datasets downloaded and extracted successfully."
               echo "Final file listing in /data:"
@@ -60,4 +55,5 @@ spec:
           volumeMounts:
             - name: datasets
               mountPath: /data
-
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 1

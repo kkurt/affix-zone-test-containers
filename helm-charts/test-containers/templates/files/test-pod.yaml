@@ -1,3 +1,4 @@
+{{- if .Values.testPvc }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -20,3 +21,4 @@ spec:
             claimName: dataset-pvc
   backoffLimit: 0
   ttlSecondsAfterFinished: 10
+{{- end }}

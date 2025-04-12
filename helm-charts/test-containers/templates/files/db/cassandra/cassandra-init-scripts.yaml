@@ -10,44 +10,47 @@ data:
 
     echo "Cassandra init-script started!"
 
+    # Cassandra settings
     CASSANDRA_HOST="{{ .Values.db.cassandra.serviceName }}"
     CASSANDRA_USER="{{ .Values.db.cassandra.users.test.username }}"
     CASSANDRA_PASSWORD="{{ .Values.db.cassandra.users.test.password }}"
     KEYSPACE="{{ .Values.db.cassandra.keyspace }}"
-    DATA_DIR="/tmp"
+    # Use the datasets mount path defined in your values.yaml (the shared PVC path)
+    DATA_DIR="{{ .Values.datasets.mountPath }}"
 
-    CREATE_TEST_TABLES="{{ .Values.db.cassandra.init.testdb.create }}"
+    # Optionally install curl
+    apt update && apt install -y curl
 
-    apt update
-    apt install -y curl
+    # Capture the global context so that tpl can access values outside the range loop.
+    {{- $root := . -}}
 
-    # Download and process the TSV files
     {{- if .Values.db.cassandra.init.testdb.create }}
-    {{- range .Values.db.cassandra.init.testdb.importFiles }}
-    {{- if .import }}
-      echo "Downloading {{ .name }} from {{ .url }}..."
-      curl -L -o ${DATA_DIR}/{{ .name }} "{{ .url }}"
+      {{- range .Values.db.cassandra.init.testdb.importFiles }}
+        echo "Processing file {{ .name }}..."
+        # Construct the full file path (assuming the file was extracted to DATA_DIR)
+        FILE_PATH="${DATA_DIR}/{{ .name }}"
+        if [ -f "$FILE_PATH" ]; then
+          echo "File $FILE_PATH exists. Proceeding with import for {{ .name }}."
 
-      cd ${DATA_DIR}
-      echo "Extracting {{ .name }}..."
-      gunzip ${DATA_DIR}/{{ .name }}
+          echo "Executing create CQL script for {{ .name }}..."
+          # Evaluate the create script using tpl so that placeholders  are substituted
+          echo "{{ tpl .createScript $root | nindent 4 }}" | sed 's/\\n/\n/g' | cqlsh -u ${CASSANDRA_USER} -p ${CASSANDRA_PASSWORD}
 
-      FILE_PATH="${DATA_DIR}/{{ .name | replace ".gz" "" }}"
+          echo "Executing load CQL script for {{ .name }}..."
+          # Evaluate the load script and substitute $FILE_PATH with the actual file path.
+          echo "{{ tpl .loadScript $root | nindent 4 }}" | sed "s|\$FILE_PATH|${FILE_PATH}|g" | cqlsh -u ${CASSANDRA_USER} -p ${CASSANDRA_PASSWORD}
 
-      echo "Creating {{ .name }} SQL script..."
-      echo {{ .createScript |quote }}| sed 's/\\n/\n/g'| cqlsh -u $CASSANDRA_USER -p $CASSANDRA_PASSWORD
-      echo "{{ trimSuffix "\n" .loadScript }}" | sed "s|\$FILE_PATH|${FILE_PATH}|g" | cqlsh -u $CASSANDRA_USER -p $CASSANDRA_PASSWORD
-      #cqlsh -u cassandra -p cassandra -e "COPY test.title_ratings (tconst, averageRating, numVotes) FROM '/tmp/title.ratings.tsv' WITH DELIMITER='	' AND HEADER=TRUE AND NULL='\N';"
+          if [ $? -ne 0 ]; then
+            echo "Data import for {{ .name }} failed. Exiting."
+            exit 1
+          fi
 
-      if [ $? -ne 0 ]; then
-      echo "Data import failed. Please check the logs for more details."
-      exit 1
-      fi
-
-      ls -al /tmp
-    {{- end }}
-    {{- end }}
+          ls -al ${DATA_DIR}
+        else
+          echo "File $FILE_PATH does not exist. Skipping import for {{ .name }}."
+        fi
+      {{- end }}
     {{- end }}
 
     echo "Cassandra init-script completed!"
-    {{- end }}
+{{- end }}

@@ -1,80 +1,116 @@
+<#
+.SYNOPSIS
+    Dynamically port-forwards services in a given namespace (configured in the script)
+    excluding a provided list of services.
 
+.DESCRIPTION
+    The script defines a Kubernetes namespace and a list of service names to exclude.
+    Before starting new port-forward background jobs, it cleans up any existing jobs that have
+    a name starting with the namespace prefix. It then retrieves all services in the namespace,
+    filters out the excluded ones, and for each remaining service creates a background job (with
+    a name composed of the namespace prefix and service name) that executes a port-forward command
+    using the first defined port of the service. When you press Enter, all port-forward jobs are
+    stopped and removed.
+
+.NOTES
+    - Ensure that `kubectl` is installed and configured in your environment.
+    - Adjust the variables $Namespace and $ExcludeServices as needed.
+    - The job names are created using the format "$Namespace-$svcName-forward".
+#>
+
+# --- Configuration ---
+# Set the target Kubernetes namespace
 $Namespace = "affixzone-test-containers"
 
-$services = @(
-@{ ServiceName = "oracle-service"; LocalPort = "1521"; RemotePort = "5300" }
-#@{ Name = "cassandra-service"; Port = "9042"; fwPort = "5500" },
-#@{ Name = "postgresql-service"; Port = "5432"; fwPort = "5400" },
-#@{ Name = "kafka-service"; Port = "9092"; fwPort = "9092" },
-#@{ Name = "kafka-ui"; Port = "8080"; fwPort = "8080" }
-    #@{ ServiceName = "minio-service"; LocalPort = "9000"; RemotePort = "9000" }
-    #@{ ServiceName = "minio-service"; LocalPort = "9001"; RemotePort = "9001" }
-# Add more services here as needed
-)
+# Provide a list of service names to exclude. Leave as empty array if no exclusions.
+$ExcludeServices = @("svc-to-exclude1", "svc-to-exclude2")
+# --- End Configuration ---
 
-# Directory to store logs
-$logDir = "$env:TEMP\affixzone-logs"
-if (-not (Test-Path $logDir)) {
-    New-Item -Path $logDir -ItemType Directory | Out-Null
+Write-Host "`nCleaning up any pre-existing port-forward jobs with the namespace prefix '$Namespace-'..."
+
+# Find and stop existing jobs that have a name starting with the namespace prefix.
+$existingJobs = Get-Job | Where-Object { $_.Name -like "$Namespace-*" }
+if ($existingJobs) {
+    foreach ($job in $existingJobs) {
+        Write-Host "Stopping pre-existing job: $($job.Name) (ID: $($job.Id))"
+        Stop-Job $job -ErrorAction SilentlyContinue
+        Remove-Job $job -ErrorAction SilentlyContinue
+    }
+    Write-Host "Pre-existing jobs cleaned up."
+} else {
+    Write-Host "No matching pre-existing jobs found."
 }
 
-# Cleanup previous jobs
-function Cleanup-PortForwardJobs {
-    Get-Job -Name "affix_zone_*" -ErrorAction SilentlyContinue | ForEach-Object {
-        Write-Host "Stopping and removing job: $($_.Name)"
-        Stop-Job -Job $_ -ErrorAction SilentlyContinue
-        Remove-Job -Job $_ -ErrorAction SilentlyContinue
+Write-Host "`nRetrieving services from namespace '$Namespace'..."
+if ($ExcludeServices.Count -gt 0) {
+    Write-Host "Excluding services:" ($ExcludeServices -join ', ')
+} else {
+    Write-Host "No services will be excluded."
+}
+
+# Retrieve all services in the specified namespace as JSON and convert to a PowerShell object
+try {
+    $servicesJson = kubectl get svc -n $Namespace -o json | ConvertFrom-Json
+} catch {
+    Write-Error "Failed to retrieve services from namespace '$Namespace'. Please check your kubectl configuration."
+    exit 1
+}
+
+if (-not $servicesJson.items) {
+    Write-Host "No services found in namespace '$Namespace'. Exiting."
+    exit 0
+}
+
+# Initialize an array to store new background jobs for port forwarding
+$jobs = @()
+
+foreach ($svc in $servicesJson.items) {
+    $svcName = $svc.metadata.name
+
+    # Skip excluded services
+    if ($ExcludeServices -contains $svcName) {
+        Write-Host "Skipping excluded service: $svcName"
+        continue
+    }
+
+    # Verify that the service has at least one port defined
+    if (-not $svc.spec.ports -or $svc.spec.ports.Count -eq 0) {
+        Write-Host "Service '$svcName' has no ports defined. Skipping port-forward."
+        continue
+    }
+
+    # Use the first defined port for port forwarding (local port equals target port)
+    $targetPort = $svc.spec.ports[0].port
+    $localPort = $targetPort
+
+    Write-Host "Starting port-forward for service '$svcName' on local port $localPort (target port: $targetPort)..."
+
+    # Start a background job for the port-forward command and name it using the namespace prefix and service name.
+    $jobName = "$Namespace-$svcName-forward"
+    $job = Start-Job -Name $jobName -ScriptBlock {
+        param($ns, $name, $lPort, $tPort)
+        kubectl port-forward "svc/$name" "$lPort`:$tPort" -n $ns
+    } -ArgumentList $Namespace, $svcName, $localPort, $targetPort
+
+    $jobs += $job
+}
+
+Write-Host ""
+Write-Host "----------------------------------------"
+Write-Host "Port forwarding is now running for the above services."
+Write-Host "Press Enter to stop all port-forward jobs..."
+Write-Host "----------------------------------------"
+[void][System.Console]::ReadLine()
+
+Write-Host "`nStopping port-forward jobs..."
+foreach ($job in $jobs) {
+    Write-Host "Stopping job $($job.Name) (ID: $($job.Id))..."
+    try {
+        Stop-Job $job -ErrorAction SilentlyContinue
+        Remove-Job $job -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "Error stopping job $($job.Name) (ID: $($job.Id)): $_"
     }
 }
 
-
-# Start initial cleanup
-Cleanup-PortForwardJobs
-
-# Function to start port-forward jobs
-function Start-PortForwardJob($service) {
-    $jobName = "affix_zone_$($service.ServiceName)"
-    $logFile = "$logDir\$($service.ServiceName).log"
-
-    Write-Host "Starting job $jobName forwarding local port $($service.LocalPort) -> remote port $($service.RemotePort)"
-
-    Start-Job -Name $jobName -ScriptBlock {
-        param($serviceName, $localPort, $remotePort, $namespace, $logFile)
-
-        while ($true) {
-            kubectl port-forward svc/$serviceName "$localPort`:$remotePort" -n $namespace *> $logFile
-            Start-Sleep -Seconds 2 # wait before retrying in case of failure
-        }
-    } -ArgumentList $service.ServiceName, $service.LocalPort, $service.RemotePort, $Namespace, $logFile
-}
-
-# Start jobs for each service
-$services | ForEach-Object { Start-PortForwardJob $_ }
-
-Write-Host "Port forwarding active. Press Enter to terminate."
-
-# Monitoring loop: Restart jobs if needed
-while ($true) {
-    if ([Console]::KeyAvailable -and ([Console]::ReadKey($true)).Key -eq 'Enter') {
-        break
-    }
-
-    foreach ($svc in $services) {
-        $result = Test-NetConnection -ComputerName localhost -Port $svc.LocalPort -WarningAction SilentlyContinue
-
-        if (-not $result.TcpTestSucceeded) {
-            Write-Warning "Port $($svc.LocalPort) forwarding failed. Restarting..."
-            $jobName = "affix_zone_$($svc.ServiceName)"
-            Cleanup-PortForwardJobs
-            Start-PortForwardJob $svc
-        }
-    }
-
-    Start-Sleep -Seconds 1
-}
-
-# Final cleanup
-Write-Host "Cleaning up port-forward jobs..."
-Cleanup-PortForwardJobs
-
-Write-Host "All jobs cleaned up. Exiting."
+Write-Host "All port-forward jobs have been stopped and removed."

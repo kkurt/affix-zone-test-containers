@@ -35,6 +35,8 @@ spec:
               mountPath: /bitnami/cassandra
             - name: cassandra-init-scripts
               mountPath: /docker-entrypoint-initdb.d
+            - mountPath: /{{ .Values.datasets.mountPath }}
+              name: dataset-pvc
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -42,4 +44,7 @@ spec:
         - name: cassandra-init-scripts
           configMap:
             name: cassandra-init-scripts
+        - name: dataset-pvc
+          persistentVolumeClaim:
+            claimName: dataset-pvc
 {{- end }}
