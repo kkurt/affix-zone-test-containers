@@ -1,20 +1,22 @@
 <#
 .SYNOPSIS
     Dynamically port-forwards services in a given namespace (configured in the script)
-    excluding a provided list of services.
+    excluding a provided list of services, and optionally maps a custom local port for specified services.
 
 .DESCRIPTION
-    The script defines a Kubernetes namespace and a list of service names to exclude.
-    Before starting new port-forward background jobs, it cleans up any existing jobs that have
-    a name starting with the namespace prefix. It then retrieves all services in the namespace,
-    filters out the excluded ones, and for each remaining service creates a background job (with
-    a name composed of the namespace prefix and service name) that executes a port-forward command
-    using the first defined port of the service. When you press Enter, all port-forward jobs are
-    stopped and removed.
+    The script defines a Kubernetes namespace, a list of service names to exclude, and optionally an array
+    of custom services (name and localPort) for overriding the default local port for port forwarding.
+    Before starting new port-forward background jobs, it cleans up any existing jobs that have a name
+    starting with the namespace prefix. It then retrieves all services in the namespace, filters out the
+    excluded ones, and for each remaining service creates a background job (with a name composed of the
+    namespace prefix and service name) that executes a port-forward command. For services defined in the
+    custom list, the script uses the specified local port (forwarding from that local port to the service’s
+    defined port); otherwise, it defaults to using the service’s defined port for both local and target ports.
+    When you press Enter, all port-forward jobs are stopped and removed.
 
 .NOTES
     - Ensure that `kubectl` is installed and configured in your environment.
-    - Adjust the variables $Namespace and $ExcludeServices as needed.
+    - Adjust the variables $Namespace, $ExcludeServices, and $CustomServices as needed.
     - The job names are created using the format "$Namespace-$svcName-forward".
 #>
 
@@ -24,6 +26,14 @@ $Namespace = "affixzone-test-containers"
 
 # Provide a list of service names to exclude. Leave as empty array if no exclusions.
 $ExcludeServices = @("svc-to-exclude1", "svc-to-exclude2")
+
+# Define custom service port mappings.
+# IMPORTANT: Define these as PSCustomObject items to allow proper property access.
+# For any service included here, the local port will be taken from this object rather than using the service's defined port.
+# Example: For "postgresql-service", use local port 5400 while the target port remains as defined in the service.
+$CustomServices = @(
+    [PSCustomObject]@{ name = "postgresql-service"; localPort = 5400 }
+)
 # --- End Configuration ---
 
 Write-Host "`nCleaning up any pre-existing port-forward jobs with the namespace prefix '$Namespace-'..."
@@ -79,11 +89,20 @@ foreach ($svc in $servicesJson.items) {
         continue
     }
 
-    # Use the first defined port for port forwarding (local port equals target port)
+    # Use the first defined port for port forwarding (target port)
     $targetPort = $svc.spec.ports[0].port
+
+    # By default, use the targetPort as the local port
     $localPort = $targetPort
 
-    Write-Host "Starting port-forward for service '$svcName' on local port $localPort (target port: $targetPort)..."
+    # Check if this service has a custom mapping in $CustomServices
+    $customMapping = $CustomServices | Where-Object { $_.name -eq $svcName }
+    if ($customMapping) {
+        $localPort = $customMapping.localPort
+        Write-Host "Custom mapping for service '$svcName': local port $localPort -> target port $targetPort"
+    } else {
+        Write-Host "Starting port-forward for service '$svcName' on local port $localPort (target port: $targetPort)..."
+    }
 
     # Start a background job for the port-forward command and name it using the namespace prefix and service name.
     $jobName = "$Namespace-$svcName-forward"

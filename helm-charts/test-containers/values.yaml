@@ -22,10 +22,8 @@ db:
       testdb:
         create: true
         importFiles :
-          - name: name.basics.tsv.gz
-            import: true
-            url: "https://datasets.imdbws.com/name.basics.tsv.gz"
-            script: |
+          - name: name.basics.tsv
+            createScript: |
               CREATE TABLE IF NOT EXISTS name_basics (
                 nconst TEXT PRIMARY KEY,
                 primaryName TEXT,
@@ -34,20 +32,20 @@ db:
                 primaryProfession TEXT,
                 knownForTitles TEXT
               );
-              \copy name_basics FROM '/tmp/name.basics.tsv' WITH (FORMAT csv, DELIMITER E'\t', QUOTE E'\b', ESCAPE E'\b', HEADER true, NULL '\N');
-          - name: title.ratings.tsv.gz
-            import: false
-            url: "https://datasets.imdbws.com/title.ratings.tsv.gz"
-            script: |
+            loadScript: |
+              \copy name_basics FROM '{{ .Values.datasets.mountPath }}/name.basics.tsv' WITH (FORMAT csv, DELIMITER E'\t', QUOTE E'\b', ESCAPE E'\b', HEADER true, NULL '\N');
+          - name: title.ratings.tsv
+            createScript: |
               CREATE TABLE IF NOT EXISTS title_ratings (
                 tconst TEXT PRIMARY KEY,
                 averageRating NUMERIC,
                 numVotes INT
               );
-              \copy title_ratings FROM '/tmp/title.ratings.tsv' WITH (FORMAT csv, DELIMITER E'\t', HEADER true, NULL '\N');
+            loadScript: |
+              \copy title_ratings FROM '{{ .Values.datasets.mountPath }}/title.ratings.tsv' WITH (FORMAT csv, DELIMITER E'\t', HEADER true, NULL '\N');
 
   oracle:
-    install: true
+    install: false
     serviceName: "oracle-service"
     port: "1521"
     oracleServiceName: "FREEPDB1"

@@ -4,28 +4,68 @@ kind: ConfigMap
 metadata:
   name: postgresql-init-scripts
 data:
-  init-db.sh: |
+  init-db.sh: |-
     #!/bin/bash
-    set -e
-    echo "Running initdb.sh"
-    # Wait for PostgreSQL to start
-    POSTGRES_HOST=localhost
-    POSTGRES_USER=postgres
-    POSTGRES_DB=postgres
-    POSTGRES_PASSWORD=1234
+    set -ex
 
-    until pg_isready -h $POSTGRES_HOST -U $POSTGRES_USER; do
-      echo "In postgresql-init-script, waiting for PostgreSQL..."
-      sleep 2
-    done
+    # Capture global context.
+    {{- $root := . -}}
 
     echo "PostgreSQL init-script started!"
 
+    # PostgreSQL connection parameters.
+    PGHOST={{ .Values.db.postgresql.serviceName }}
+    PGPORT={{ .Values.db.postgresql.port }}
+    PGUSER={{ .Values.db.postgresql.root.username }}
+    PGDATABASE={{ .Values.db.postgresql.root.database }}
+    POSTGRESQL_PASSWORD={{ .Values.db.postgresql.root.password }}
 
-    echo "PostgreSQL init-script done!"
-  postgres-init-test-db.sql: |
-    CREATE DATABASE test;
-    CREATE USER test WITH ENCRYPTED PASSWORD 'test';
-    GRANT ALL PRIVILEGES ON DATABASE test TO test;
-    \q
+    # Use the datasets mount path defined in values (the shared PVC).
+    DATASET_PATH={{ .Values.datasets.mountPath }}
+
+    # Wait until PostgreSQL is ready.
+    RETRIES=0
+    MAX_RETRIES=12
+    #until pg_isready -h ${PGHOST} -p ${PGPORT} -U ${PGUSER}; do
+    until pg_isready -U ${PGUSER}; do
+      RETRIES=$((RETRIES+1))
+      if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
+        echo "PostgreSQL did not become available in time."
+        exit 1
+      fi
+      echo "Waiting for PostgreSQL... attempt ${RETRIES}/${MAX_RETRIES}"
+      sleep 2
+    done
+
+    echo "PostgreSQL is ready!"
+
+
+    {{- if .Values.db.postgresql.init.testdb.create }}
+      # Loop through each import file defined for PostgreSQL.
+      {{- range .Values.db.postgresql.init.testdb.importFiles }}
+        FILE_TO_IMPORT="${DATASET_PATH}/{{ .name }}"
+        echo "Processing import for file {{ .name }}..."
+        if [ -f "$FILE_TO_IMPORT" ]; then
+          echo "File $FILE_TO_IMPORT exists. Proceeding with import for {{ .name }}..."
+
+          echo "Running SQL create script for {{ .name }}..."
+          #psql -h ${PGHOST} -p ${PGPORT} -U ${PGUSER} -d ${PGDATABASE} <<-EOF
+          PGPASSWORD=$POSTGRESQL_PASSWORD psql -U ${PGUSER} -d ${PGDATABASE} <<-EOF
+{{ tpl .createScript $root | nindent 4 }}
+    EOF
+
+    echo "Running SQL load script for {{ .name }}..."
+    # Here we assume that your loadScript contains a placeholder "$FILE_PATH" that needs to be substituted.
+    PGPASSWORD=$POSTGRESQL_PASSWORD psql -U ${PGUSER} -d ${PGDATABASE} <<-EOF
+{{ tpl .loadScript $root | nindent 4 }}
+    EOF
+
+    echo "Import for {{ .name }} completed."
+    else
+    echo "File $FILE_TO_IMPORT does not exist. Skipping import for {{ .name }}."
+    fi
+        {{- end }}
+      {{- end }}
+
+    echo "PostgreSQL init-script completed!"
 {{- end }}
