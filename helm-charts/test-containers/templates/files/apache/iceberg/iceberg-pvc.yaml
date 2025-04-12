@@ -1,0 +1,12 @@
+{{- if .Values.iceberg.install }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: iceberg-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+{{- end }}

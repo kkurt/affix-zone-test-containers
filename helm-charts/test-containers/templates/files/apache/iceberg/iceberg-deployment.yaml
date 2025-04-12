@@ -1,0 +1,52 @@
+{{- if .Values.iceberg.install }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iceberg
+  labels:
+    app: iceberg
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iceberg
+  template:
+    metadata:
+      labels:
+        app: iceberg
+    spec:
+      securityContext:
+        runAsUser: 1001        # Adjust to a proper non-root UID if necessary
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: iceberg
+          image: apache/iceberg-rest-fixture  # Update to a valid Iceberg image
+          ports:
+            - name: iceberg
+              containerPort: {{ .Values.iceberg.port }}
+              hostPort: {{ .Values.iceberg.port }}
+          env:
+            - name: ICEBERG_USER
+              valueFrom:
+                secretKeyRef:
+                  name: iceberg-secret
+                  key: iceberg-user
+            - name: ICEBERG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: iceberg-secret
+                  key: iceberg-password
+          volumeMounts:
+            - name: iceberg-volume
+              mountPath: /iceberg/metadata
+            - name: iceberg-init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: iceberg-volume
+          persistentVolumeClaim:
+            claimName: iceberg-pvc
+        - name: iceberg-init-scripts
+          configMap:
+            name: iceberg-init-scripts
+{{- end }}

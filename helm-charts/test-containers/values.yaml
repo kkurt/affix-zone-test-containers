@@ -1,0 +1,189 @@
+namespace: "affixzone-test-containers"
+
+datasets:
+    mountPath: "/datasets"
+    files:
+    - name: title.ratings.tsv
+      download: true
+      url: "https://datasets.imdbws.com/title.ratings.tsv.gz"
+    - name: name.basics.tsv
+      download: true
+      url: "https://datasets.imdbws.com/name.basics.tsv.gz"
+db:
+  postgresql:
+    install: false
+    serviceName: "postgresql-service"
+    port: "5432"
+    root:
+      username: "postgres"
+      password: "1234"
+      database: "postgres"
+    init:
+      testdb:
+        create: true
+        importFiles :
+          - name: name.basics.tsv.gz
+            import: true
+            url: "https://datasets.imdbws.com/name.basics.tsv.gz"
+            script: |
+              CREATE TABLE IF NOT EXISTS name_basics (
+                nconst TEXT PRIMARY KEY,
+                primaryName TEXT,
+                birthYear TEXT,
+                deathYear TEXT,
+                primaryProfession TEXT,
+                knownForTitles TEXT
+              );
+              \copy name_basics FROM '/tmp/name.basics.tsv' WITH (FORMAT csv, DELIMITER E'\t', QUOTE E'\b', ESCAPE E'\b', HEADER true, NULL '\N');
+          - name: title.ratings.tsv.gz
+            import: false
+            url: "https://datasets.imdbws.com/title.ratings.tsv.gz"
+            script: |
+              CREATE TABLE IF NOT EXISTS title_ratings (
+                tconst TEXT PRIMARY KEY,
+                averageRating NUMERIC,
+                numVotes INT
+              );
+              \copy title_ratings FROM '/tmp/title.ratings.tsv' WITH (FORMAT csv, DELIMITER E'\t', HEADER true, NULL '\N');
+
+  oracle:
+    install: true
+    serviceName: "oracle-service"
+    port: "1521"
+    oracleServiceName: "FREEPDB1"
+    users:
+      root:
+        username: "SYSTEM"
+        password: "12345"
+      test:
+        username: "TEST"
+        password: "12345"
+    init:
+      testdb:
+        create: true
+        importFiles :
+          - name: name.basics.tsv
+            createScript:
+              CREATE TABLE name_basics (
+              nconst VARCHAR2(20) PRIMARY KEY,
+              primaryName VARCHAR2(200),
+              birthYear VARCHAR2(10),
+              deathYear VARCHAR2(10),
+              primaryProfession VARCHAR2(400),
+              knownForTitles VARCHAR2(400)
+              );
+            loadScript:
+              LOAD DATA INFILE '{{ .Values.datasets.mountPath }}/name.basics.tsv'
+              INTO TABLE name_basics
+              FIELDS TERMINATED BY '\t'
+              TRAILING NULLCOLS
+              (
+              nconst CHAR(20),
+              primaryName CHAR(200),
+              birthYear CHAR(10),
+              deathYear CHAR(10),
+              primaryProfession CHAR(400),
+              knownForTitles CHAR(400)
+              )
+          - name: title.ratings.tsv
+            createScript:
+              CREATE TABLE title_ratings (
+                tconst VARCHAR2(20) PRIMARY KEY,
+                averageRating NUMERIC,
+                numVotes INT
+              );
+            loadScript:
+              LOAD DATA INFILE '{{ .Values.datasets.mountPath }}/title.ratings.tsv'
+              INTO TABLE title_ratings
+              FIELDS TERMINATED BY '\t'
+              TRAILING NULLCOLS
+              (
+                tconst CHAR(20),
+                averageRating DECIMAL(3,1),
+                numVotes INTEGER
+              )
+  cassandra:
+    install: false
+    serviceName: "cassandra-service"
+    port: "9042"
+    keyspace: "test"
+    users:
+      test:
+        username: "cassandra"
+        password: "cassandra"
+    init:
+      testdb:
+        create: true
+        importFiles :
+          - name: title.ratings.tsv.gz
+            import: false
+            url: "https://datasets.imdbws.com/title.ratings.tsv.gz"
+            createScript: |
+              CREATE KEYSPACE IF NOT EXISTS test
+              WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+              USE test;              
+              CREATE TABLE IF NOT EXISTS title_ratings (
+              tconst TEXT PRIMARY KEY,
+              averageRating FLOAT,
+              numVotes INT
+              );
+            loadScript: |
+              COPY test.title_ratings (tconst, averageRating, numVotes) FROM '$FILE_PATH' WITH DELIMITER='	' AND HEADER=TRUE AND NULL='N';
+          - name: name.basics.tsv.gz
+            import: true
+            url: "https://datasets.imdbws.com/name.basics.tsv.gz"
+            createScript: |
+              CREATE KEYSPACE IF NOT EXISTS test
+              WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+              USE test;
+              CREATE TABLE IF NOT EXISTS name_basics (
+                nconst TEXT PRIMARY KEY,
+                primaryName TEXT,
+                birthYear TEXT,
+                deathYear TEXT,
+                primaryProfession TEXT,
+                knownForTitles TEXT
+              );
+            loadScript: |
+              COPY test.name_basics (nconst, primaryName, birthYear, deathYear, primaryProfession, knownForTitles)  FROM '$FILE_PATH'   WITH DELIMITER='	' AND HEADER=TRUE AND NULL='\N';
+
+kafka:
+  install: false
+  installUI: true
+  numMessages: 10000
+  serviceName: "kafka-service"
+  port: 9092
+  image: "bitnami/kafka:3.9.0"
+  users:
+    test:
+      username: "kafka"
+      password: "kafka"
+  init: true
+iceberg:
+  install: false
+  serviceName: "iceberg-service"
+  port: 8080        # Update to the port that the container listens on
+  users:
+    default:
+      username: "iceberg"
+      password: "test123"
+  init:
+    create: true
+
+minio:
+  install: false
+  serviceName: "minio-service"
+  port: 9000   # Default MinIO port, update if necessary
+  users:
+    default:
+      username: "minioadmin"
+      password: "minioadmin"
+  init:
+    testdata:
+      importFiles:
+        - name: name.basics.tsv
+          import: true
+          bucket: "testbucket"
+        - name: title.ratings.tsv
+          import: true
+          bucket: "testbucket"

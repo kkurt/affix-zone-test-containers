@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: download-datasets
+  namespace: {{ .Values.namespace }}
+  annotations:
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      volumes:
+        - name: datasets
+          persistentVolumeClaim:
+            claimName: dataset-pvc
+      containers:
+        - name: downloader
+          image: alpine:3.18
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "Installing aria2 and checking gunzip..."
+              apk add --no-cache aria2
+
+              cd /data
+
+              # Check if gunzip is available; if not, download busybox to provide it.
+              if ! command -v gunzip > /dev/null 2>&1; then
+                echo "gunzip not found. Downloading BusyBox binary to provide gunzip functionality."
+                wget -O /tmp/busybox https://busybox.net/downloads/binaries/1.35.0/busybox-x86_64
+                chmod +x /tmp/busybox
+                # Define a shell function to wrap the busybox gunzip command.
+                gunzip() {
+                  /tmp/busybox gunzip "$@"
+                }
+              fi
+
+              echo "Starting dataset download and extraction..."
+
+              {{- range .Values.datasets.files }}
+              {{- if .download }}
+              echo "Downloading {{ .name }} from {{ .url }} ..."
+              aria2c -x 8 -s 8 -d /data -o "{{ .name }}" "{{ .url }}"
+
+              # Use a runtime shell check for ".gz" suffix
+              if echo "{{ .name }}" | grep -q '\.gz$'; then
+                echo "Extracting {{ .name }} ..."
+                gunzip -f "{{ .name }}"
+                echo "Listing files after extracting {{ .name }}:"
+                ls -l /data
+              fi
+              {{- end }}
+              {{- end }}
+
+              echo "✅ All datasets downloaded and extracted successfully."
+              echo "Final file listing in /data:"
+              ls -l /data
+          volumeMounts:
+            - name: datasets
+              mountPath: /data
+

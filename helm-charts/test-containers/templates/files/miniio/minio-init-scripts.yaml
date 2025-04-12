@@ -1,0 +1,32 @@
+{{- if .Values.minio.install }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minio-init-scripts
+data:
+  init-minio.sh: |
+    #!/bin/sh
+    set -e
+
+    echo "MinIO init script started!"
+
+    # Configure the MinIO client (mc) alias for the local server
+    mc alias set local http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+
+    # Create bucket for test data (ignore error if exists)
+    mc mb local/testbucket || true
+
+    # Get the mount path from values (e.g. "/datasets")
+    MOUNT_PATH={{ .Values.datasets.mountPath }}
+
+    # Process each file from the minio init configuration
+    {{- range .Values.minio.init.testdata.importFiles }}
+    {{- if .import }}
+    FILE_NAME="{{ .name }}"
+    echo "Uploading $(basename $FILE_NAME) to bucket {{ .bucket }}..."
+    mc cp "$MOUNT_PATH/$FILE_NAME" local/{{ .bucket }}
+    {{- end }}
+    {{- end }}
+
+    echo "MinIO init script completed!"
+{{- end }}

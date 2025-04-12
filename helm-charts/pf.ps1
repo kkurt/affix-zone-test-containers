@@ -1,62 +1,80 @@
-# Traefik port-forwarding script for Kubernetes
-# kubectl port-forward -n kube-system $(kubectl -n kube-system get pods --selector "app.kubernetes.io/name=traefik" --output=name | ForEach-Object { $_.Substring(4) }) 8080:9000
-# Define the Kubernetes namespace
-$namespace = "affixzone-test-containers"
 
-# Define the array of services with their respective ports
+$Namespace = "affixzone-test-containers"
+
 $services = @(
-    @{ Name = "oracle-service"; Port = "1521"; fwPort = "5300" },
-    @{ Name = "cassandra-service"; Port = "9042"; fwPort = "5500" },
-    @{ Name = "postgresql-service"; Port = "5432"; fwPort = "5400" },
-    @{ Name = "kafka-service"; Port = "9092"; fwPort = "9092" },
-    @{ Name = "kafka-ui"; Port = "8080"; fwPort = "8080" }
+@{ ServiceName = "oracle-service"; LocalPort = "1521"; RemotePort = "5300" }
+#@{ Name = "cassandra-service"; Port = "9042"; fwPort = "5500" },
+#@{ Name = "postgresql-service"; Port = "5432"; fwPort = "5400" },
+#@{ Name = "kafka-service"; Port = "9092"; fwPort = "9092" },
+#@{ Name = "kafka-ui"; Port = "8080"; fwPort = "8080" }
+    #@{ ServiceName = "minio-service"; LocalPort = "9000"; RemotePort = "9000" }
+    #@{ ServiceName = "minio-service"; LocalPort = "9001"; RemotePort = "9001" }
 # Add more services here as needed
 )
 
-# List to keep track of started processes
-$processes = @()
+# Directory to store logs
+$logDir = "$env:TEMP\affixzone-logs"
+if (-not (Test-Path $logDir)) {
+    New-Item -Path $logDir -ItemType Directory | Out-Null
+}
 
-# Function to stop all port-forwarding processes gracefully
-function Stop-PortForwarding {
-    Write-Host "`nStopping all port-forwarding sessions..."
-    foreach ($proc in $processes) {
-        if (!$proc.HasExited) {
-            $proc.Kill()
+# Cleanup previous jobs
+function Cleanup-PortForwardJobs {
+    Get-Job -Name "affix_zone_*" -ErrorAction SilentlyContinue | ForEach-Object {
+        Write-Host "Stopping and removing job: $($_.Name)"
+        Stop-Job -Job $_ -ErrorAction SilentlyContinue
+        Remove-Job -Job $_ -ErrorAction SilentlyContinue
+    }
+}
+
+
+# Start initial cleanup
+Cleanup-PortForwardJobs
+
+# Function to start port-forward jobs
+function Start-PortForwardJob($service) {
+    $jobName = "affix_zone_$($service.ServiceName)"
+    $logFile = "$logDir\$($service.ServiceName).log"
+
+    Write-Host "Starting job $jobName forwarding local port $($service.LocalPort) -> remote port $($service.RemotePort)"
+
+    Start-Job -Name $jobName -ScriptBlock {
+        param($serviceName, $localPort, $remotePort, $namespace, $logFile)
+
+        while ($true) {
+            kubectl port-forward svc/$serviceName "$localPort`:$remotePort" -n $namespace *> $logFile
+            Start-Sleep -Seconds 2 # wait before retrying in case of failure
+        }
+    } -ArgumentList $service.ServiceName, $service.LocalPort, $service.RemotePort, $Namespace, $logFile
+}
+
+# Start jobs for each service
+$services | ForEach-Object { Start-PortForwardJob $_ }
+
+Write-Host "Port forwarding active. Press Enter to terminate."
+
+# Monitoring loop: Restart jobs if needed
+while ($true) {
+    if ([Console]::KeyAvailable -and ([Console]::ReadKey($true)).Key -eq 'Enter') {
+        break
+    }
+
+    foreach ($svc in $services) {
+        $result = Test-NetConnection -ComputerName localhost -Port $svc.LocalPort -WarningAction SilentlyContinue
+
+        if (-not $result.TcpTestSucceeded) {
+            Write-Warning "Port $($svc.LocalPort) forwarding failed. Restarting..."
+            $jobName = "affix_zone_$($svc.ServiceName)"
+            Cleanup-PortForwardJobs
+            Start-PortForwardJob $svc
         }
     }
-    Write-Host "All port-forwarding sessions stopped."
-    # Unregister the event subscription
-    Unregister-Event -SourceIdentifier 'CtrlCHandler' -ErrorAction SilentlyContinue
-    exit
-}
 
-# Register the Ctrl+C event handler using Register-ObjectEvent
-$null = Register-ObjectEvent -InputObject [Console] -EventName 'CancelKeyPress' -SourceIdentifier 'CtrlCHandler' -Action {
-    Stop-PortForwarding
-}
-
-# Start port-forwarding for each service
-foreach ($service in $services) {
-    $name = $service.Name
-    $servicePort = $service.Port
-    $fwPort = $service.fwPort
-
-    # Check if the service exists
-    $kubectlOutput = kubectl get svc $name -n $namespace 2>&1
-
-    if ($kubectlOutput -match "Error from server") {
-        Write-Host "Service $name not found in namespace $namespace. Skipping."
-    } else {
-        Write-Host "Starting port-forwarding for $name on port $servicePort..."
-
-        $process = Start-Process -FilePath "kubectl" -ArgumentList "port-forward svc/$name $fwPort`:$servicePort -n $namespace" -NoNewWindow -PassThru
-        $processes += $process
-    }
-}
-
-# Keep the script running and wait for Ctrl+C to stop
-Write-Host "Press Ctrl+C to stop all port-forwarding sessions."
-
-while ($true) {
     Start-Sleep -Seconds 1
 }
+
+# Final cleanup
+Write-Host "Cleaning up port-forward jobs..."
+Cleanup-PortForwardJobs
+
+Write-Host "All jobs cleaned up. Exiting."

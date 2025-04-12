@@ -1,1 +1,1 @@
-Installing affixzone-test-containers for {{ .Values.backendHostName }}
+Installing affixzone-test-containers.

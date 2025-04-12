@@ -1,0 +1,23 @@
+{{- if .Values.iceberg.install }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iceberg-init-scripts
+data:
+  init-iceberg.sh: |
+    #!/bin/bash
+    set -e
+    echo "Iceberg init-script started!"
+
+    # Wait until the service is ready (if needed).
+    echo "Waiting for Apache Iceberg service to become available..."
+    # Add any service-check logic here. For example, a curl check against an HTTP endpoint.
+    sleep 5
+
+    echo "Creating default Iceberg table..."
+    # Placeholder: Execute commands to create an initial table if you have a CLI or Spark-based command.
+    # e.g., iceberg-cli commands or spark-sql calls.
+    echo "Default Iceberg table created."
+
+    echo "Iceberg init-script completed!"
+{{- end }}

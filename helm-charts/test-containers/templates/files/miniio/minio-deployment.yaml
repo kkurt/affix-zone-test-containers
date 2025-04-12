@@ -1,0 +1,80 @@
+{{- if .Values.minio.install }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  labels:
+    app: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      securityContext:
+        # Run as root to allow the init script to modify permissions.
+        runAsUser: 0
+        fsGroup: 0
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          # Override the command to run minio server and then the init script.
+          command:
+            - /bin/sh
+          args:
+            - -cex
+            - |
+              echo "Starting MinIO server..."
+              minio server /data --console-address :9001 &
+              PID=$!
+
+              # Wait for the server to initialize (you can replace sleep with a readiness check)
+              echo "Waiting for MinIO to initialize..."
+              sleep 5
+
+              # Copy the init script from the mounted volume to a writable directory and set executable permission.
+              echo "Copying and setting executable permission on init script..."
+              cp /docker-entrypoint-initminio.d/init-minio.sh /tmp/init-minio.sh
+              chmod +x /tmp/init-minio.sh
+
+              echo "Executing MinIO init script..."
+              /tmp/init-minio.sh || { echo "Init script failed"; exit 1; }
+
+              echo "Initialization completed. Waiting on MinIO server process..."
+              wait $PID
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: minio-root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: minio-root-password
+          volumeMounts:
+            - name: minio-volume
+              mountPath: /data
+            - name: minio-init-scripts
+              mountPath: /docker-entrypoint-initminio.d
+            - mountPath: /{{ .Values.datasets.mountPath }}
+              name: dataset-pvc
+      volumes:
+        - name: minio-volume
+          persistentVolumeClaim:
+            claimName: minio-pvc
+        - name: minio-init-scripts
+          configMap:
+            name: minio-init-scripts
+        - name: dataset-pvc
+          persistentVolumeClaim:
+            claimName: dataset-pvc
+{{- end }}

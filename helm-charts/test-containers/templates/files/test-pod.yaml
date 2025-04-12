@@ -1,0 +1,22 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pvc-test-job
+  namespace: affixzone-test-containers
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: pvc-test-container
+          image: alpine
+          command: ["sleep", "3600"]
+          volumeMounts:
+            - mountPath: /data
+              name: dataset-pvc
+      volumes:
+        - name: dataset-pvc
+          persistentVolumeClaim:
+            claimName: dataset-pvc
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 10
