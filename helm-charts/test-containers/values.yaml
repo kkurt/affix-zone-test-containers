@@ -155,21 +155,11 @@ kafka:
       username: "kafka"
       password: "kafka"
   init: true
-iceberg:
-  install: false
-  serviceName: "iceberg-service"
-  port: 8080        # Update to the port that the container listens on
-  users:
-    default:
-      username: "iceberg"
-      password: "test123"
-  init:
-    create: true
-
 minio:
-  install: false
+  install: true
   serviceName: "minio-service"
   port: 9000   # Default MinIO port, update if necessary
+  testBucketName: "testbucket"
   users:
     default:
       username: "minioadmin"
@@ -178,8 +168,22 @@ minio:
     testdata:
       importFiles:
         - name: name.basics.tsv
-          import: true
-          bucket: "testbucket"
+          bucket: |
+            {{ .Values.minio.testBucketName }}
         - name: title.ratings.tsv
-          import: true
-          bucket: "testbucket"
+          bucket: |
+            {{ .Values.minio.testBucketName }}
+superset:
+    install: false
+iceberg:
+  install: true
+  serviceName: "iceberg-service"
+  port: 8181
+  users:
+    default:
+      username: "iceberg"
+      password: "test123"
+  init:
+    create: true
+hudi:
+  install: false

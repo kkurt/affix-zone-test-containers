@@ -1,0 +1,37 @@
+{{- if .Values.superset.install }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: superset
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: superset-app
+  template:
+    metadata:
+      labels:
+        app: superset-app
+    spec:
+      containers:
+        - name: superset
+          image: apache/superset:2.0.0
+          env:
+            # Point Superset to use a SQLite DB in the persistent volume
+            - name: SUPERSET__SQLALCHEMY_DATABASE_URI
+              value: sqlite:////app/superset_home/superset.db
+            # (Optional) Explicitly set SUPERSET_HOME, in case not already set
+            - name: SUPERSET_HOME
+              value: /app/superset_home
+            # (Recommended) Set a secret key for Flask sessions
+            - name: SUPERSET_SECRET_KEY
+              value: YOUR_SECURE_RANDOM_KEY_HERE
+          volumeMounts:
+            - name: superset-data
+              mountPath: /app/superset_home
+      volumes:
+        - name: superset-data
+          persistentVolumeClaim:
+            claimName: superset-data-pvc
+  {{- end }}

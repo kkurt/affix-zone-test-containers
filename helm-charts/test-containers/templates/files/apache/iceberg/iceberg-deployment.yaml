@@ -37,6 +37,25 @@ spec:
                 secretKeyRef:
                   name: iceberg-secret
                   key: iceberg-password
+            # --- Added for MinIO Integration ---
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: minio-root-password
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: minio-root-user
+            # Set the warehouse directory to the test bucket in MinIO using the S3A scheme
+            - name: ICEBERG_WAREHOUSE
+              value: "s3a://{{ .Values.minio.testBucketName}}/"
+            # Point to the MinIO endpoint; adjust the URL if needed
+            - name: S3_ENDPOINT
+              value: "http://minio-service:9000"
+            # Depending on your Iceberg setup, you might also need to set additional
+            # Hadoop or Iceberg configuration parameters via environment variables.
           volumeMounts:
             - name: iceberg-volume
               mountPath: /iceberg/metadata

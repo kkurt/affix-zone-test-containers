@@ -1,0 +1,12 @@
+{{- if .Values.hudi.install }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: datasets-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 2Gi
+{{- end }}

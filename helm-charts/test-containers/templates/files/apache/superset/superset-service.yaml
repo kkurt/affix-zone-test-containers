@@ -1,0 +1,15 @@
+{{- if .Values.superset.install }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: superset-service
+  namespace: {{ .Values.namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: superset-app
+  ports:
+    - name: http
+      port: 8088
+      targetPort: 8088
+  {{- end }}

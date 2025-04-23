@@ -1,0 +1,49 @@
+{{- if .Values.hudi.install }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hudi-init-scripts
+data:
+  init-db.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "Apache Hudi init-script started!"
+    DATASET_PATH="{{ .Values.datasets.mountPath }}"
+    HUDI_BASE_PATH="/tmp/hudi_output"
+
+    mkdir -p "$HUDI_BASE_PATH"
+
+    for file in "$DATASET_PATH"/*.tsv; do
+      if [ -f "$file" ]; then
+        echo "Processing $file in Apache Hudi via Spark..."
+
+        /opt/spark/bin/spark-shell --conf 'spark.serializer=org.apache.spark.serializer.KryoSerializer' <<EOF
+      import org.apache.spark.sql.SaveMode
+      import org.apache.hudi.DataSourceWriteOptions._
+      import org.apache.hudi.config.HoodieWriteConfig
+      import org.apache.spark.sql.functions._
+
+      val inputDF = spark.read.option("header", "true").option("sep", "\t").csv("$file")
+
+      val tableName = "${file##*/}".stripSuffix(".tsv").replace(".", "_")
+      val tablePath = s"$HUDI_BASE_PATH/\$tableName"
+
+      inputDF.write.format("hudi")
+      .option(TABLE_TYPE.key(), "COPY_ON_WRITE")
+      .option(PRECOMBINE_FIELD.key(), "ts")
+      .option(RECORDKEY_FIELD.key(), "id")
+      .option(PARTITIONPATH_FIELD.key(), "")
+      .option(TABLE_NAME.key(), tableName)
+      .mode(SaveMode.Overwrite)
+      .save(tablePath)
+      EOF
+
+      echo "✅ Imported $file into Hudi table $tableName"
+      else
+      echo "⚠️  Skipping missing file: $file"
+      fi
+      done
+
+      echo "Apache Hudi init-script completed!"
+{{- end }}
