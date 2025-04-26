@@ -41,6 +41,12 @@ $CustomServices = @(
             [PSCustomObject]@{ localPort = 9100; remotePort = 9000 }
         # You can add more mapping objects if needed.
         )
+    },
+    [PSCustomObject]@{
+        name = "postgresql-service"
+        mappings = @(
+            [PSCustomObject]@{ localPort = 5400; remotePort = 5432 }
+        )
     }
 )
 # --- End Configuration ---

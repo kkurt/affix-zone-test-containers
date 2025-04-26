@@ -4,68 +4,80 @@ kind: ConfigMap
 metadata:
   name: postgresql-init-scripts
 data:
-  init-db.sh: |-
-    #!/bin/bash
-    set -ex
+  init-db.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
 
-    # Capture global context.
-    {{- $root := . -}}
-
-    echo "PostgreSQL init-script started!"
-
-    # PostgreSQL connection parameters.
-    PGHOST={{ .Values.db.postgresql.serviceName }}
+    echo "→ PostgreSQL init-script starting…"
+    export PGPASSWORD={{ .Values.db.postgresql.users.root.password }}
+    PGUSER={{ .Values.db.postgresql.users.root.username }}
     PGPORT={{ .Values.db.postgresql.port }}
-    PGUSER={{ .Values.db.postgresql.root.username }}
-    PGDATABASE={{ .Values.db.postgresql.root.database }}
-    POSTGRESQL_PASSWORD={{ .Values.db.postgresql.root.password }}
+    MASTER_DB=postgres
+    DB_NAME={{ .Values.db.postgresql.testdb.name }}
 
-    # Use the datasets mount path defined in values (the shared PVC).
-    DATASET_PATH={{ .Values.datasets.mountPath }}
-
-    # Wait until PostgreSQL is ready.
-    RETRIES=0
-    MAX_RETRIES=12
-    #until pg_isready -h ${PGHOST} -p ${PGPORT} -U ${PGUSER}; do
-    until pg_isready -U ${PGUSER}; do
-      RETRIES=$((RETRIES+1))
-      if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
-        echo "PostgreSQL did not become available in time."
-        exit 1
-      fi
-      echo "Waiting for PostgreSQL... attempt ${RETRIES}/${MAX_RETRIES}"
-      sleep 2
+    # 1) wait for Postgres
+    for i in 1 2 3; do
+      if psql -U "$PGUSER" -p "$PGPORT" -d "$MASTER_DB" -c '\q' &>/dev/null; then break; fi
+      echo "Waiting for PostgreSQL… attempt $i/3"; sleep 1
     done
+    echo "✔ PostgreSQL is ready."
 
-    echo "PostgreSQL is ready!"
-
-
-    {{- if .Values.db.postgresql.init.testdb.create }}
-      # Loop through each import file defined for PostgreSQL.
-      {{- range .Values.db.postgresql.init.testdb.importFiles }}
-        FILE_TO_IMPORT="${DATASET_PATH}/{{ .name }}"
-        echo "Processing import for file {{ .name }}..."
-        if [ -f "$FILE_TO_IMPORT" ]; then
-          echo "File $FILE_TO_IMPORT exists. Proceeding with import for {{ .name }}..."
-
-          echo "Running SQL create script for {{ .name }}..."
-          #psql -h ${PGHOST} -p ${PGPORT} -U ${PGUSER} -d ${PGDATABASE} <<-EOF
-          PGPASSWORD=$POSTGRESQL_PASSWORD psql -U ${PGUSER} -d ${PGDATABASE} <<-EOF
-{{ tpl .createScript $root | nindent 4 }}
-    EOF
-
-    echo "Running SQL load script for {{ .name }}..."
-    # Here we assume that your loadScript contains a placeholder "$FILE_PATH" that needs to be substituted.
-    PGPASSWORD=$POSTGRESQL_PASSWORD psql -U ${PGUSER} -d ${PGDATABASE} <<-EOF
-{{ tpl .loadScript $root | nindent 4 }}
-    EOF
-
-    echo "Import for {{ .name }} completed."
+    # 2) create the test DB if missing
+    EXISTS=$(psql -tA -U "$PGUSER" -p "$PGPORT" -d "$MASTER_DB" \
+      -c "SELECT 1 FROM pg_database WHERE datname='$DB_NAME';")
+    if [ "$EXISTS" != "1" ]; then
+      echo "→ Creating database '$DB_NAME'…"
+      psql -U "$PGUSER" -p "$PGPORT" -d "$MASTER_DB" \
+        -c "CREATE DATABASE \"$DB_NAME\" OWNER \"$PGUSER\";"
     else
-    echo "File $FILE_TO_IMPORT does not exist. Skipping import for {{ .name }}."
+      echo "→ Database '$DB_NAME' already exists; skipping creation."
     fi
-        {{- end }}
+
+    {{- /* bring in Helm context */ -}}
+    {{- $root := . }}
+    {{- $imports := default (list) $root.Values.db.postgresql.testdb.import }}
+    {{- $mount := $root.Values.dataset.mountPath }}
+
+    # 3) drop old tables in reverse order
+    {{- if gt (len $imports) 0 }}
+    echo "→ Dropping existing tables…"
+    {{- range $imp := reverse $imports }}
+    echo "  • DROP TABLE IF EXISTS {{ $imp.name }} CASCADE"
+    psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
+      -c "DROP TABLE IF EXISTS {{ $imp.name }} CASCADE;"
+    {{- end }}
+    echo "✔ All old tables dropped."
+    {{- end }}
+
+    # 4) loop over each dataset file
+    {{- range $file := $root.Values.dataset.files }}
+    {{- $count := $file.dataSize | int }}
+    {{- if gt $count 0 }}
+    FILE_PATH="{{ $mount }}/{{ $file.name }}.csv"
+    echo "→ processing '{{ $file.name }}' ({{ $count }} rows) from $FILE_PATH"
+
+      {{- /* find and apply matching import block */}}
+      {{- range $imp := $imports }}
+      {{- if eq $imp.name $file.name }}
+      {{- /* build a context with both .name and top-level values */}}
+      {{- $ctx := dict "name" $imp.name "Values" $root.Values }}
+
+    echo "  • creating table '{{ $imp.name }}'…"
+    psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
+      -c "{{ tpl $imp.createScript $ctx | replace "\n" " " | trim }}"
+
+    echo "  • loading '{{ $imp.name }}'…"
+    psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
+      -c "{{ tpl $imp.loadScript  $ctx | replace "\n" " " | trim }}"
+
+    echo "  ✔ import for '{{ $imp.name }}' completed."
+      {{- end }}
       {{- end }}
 
-    echo "PostgreSQL init-script completed!"
+    {{- else }}
+    echo "→ skipping '{{ $file.name }}' (0 rows)"
+    {{- end }}
+    {{- end }}
+
+    echo "→ PostgreSQL init-script finished."
 {{- end }}

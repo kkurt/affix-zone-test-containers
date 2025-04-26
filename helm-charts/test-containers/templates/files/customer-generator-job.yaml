@@ -1,0 +1,48 @@
+{{- $root := . }}
+{{- range $file := $root.Values.dataset.files }}
+{{- if and (eq $file.name "customer") (gt ($file.dataSize | int) 0) }}
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: customer-generator-job
+  namespace: {{ $root.Values.namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-100"
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 10
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: customer-generator
+          image: python:3.11-slim
+          workingDir: /app
+          volumeMounts:
+            - name: script
+              mountPath: /app
+            - name: data
+              mountPath: {{ $root.Values.dataset.mountPath }}
+          env:
+            - name: RECORD_COUNT
+              value: "{{ $file.dataSize | int }}"
+          command: ["sh","-c"]
+          args:
+            - |
+              pip install faker && \
+              python generate_customers.py \
+                {{ $root.Values.dataset.mountPath }}/{{ $file.name }}.csv \
+                $RECORD_COUNT && \
+              echo "✔ Generated $RECORD_COUNT records at {{ $root.Values.dataset.mountPath }}/{{ $file.name }}.csv"
+      volumes:
+        - name: script
+          configMap:
+            name: customer-generator-script
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $root.Values.dataset.pvcName }}
+
+{{- end }}
+{{- end }}

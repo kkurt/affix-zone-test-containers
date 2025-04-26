@@ -1,0 +1,64 @@
+# templates/customer-tran-generator-script.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-customer-tran-generator-script
+  namespace: {{ .Values.namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10000"
+data:
+  generate_customer_tran.py: |-
+    #!/usr/bin/env python3
+    import csv, random, uuid, sys, os
+    from datetime import datetime, timedelta
+
+    # Configuration from Helm values
+    MOUNT_PATH = "{{ .Values.dataset.mountPath }}"
+    CUSTOMER_CSV = os.path.join(MOUNT_PATH, "customer.csv")
+
+    def random_date(start, end):
+        return start + timedelta(seconds=random.randint(0, int((end-start).total_seconds())))
+
+    # Validate existence of customer data
+    if not os.path.isfile(CUSTOMER_CSV):
+        print(f"Error: customer file not found at {CUSTOMER_CSV}", file=sys.stderr)
+        sys.exit(1)
+
+    # Read CustomerId values
+    customer_ids = []
+    with open(CUSTOMER_CSV, newline='') as cf:
+        reader = csv.DictReader(cf)
+        for row in reader:
+            cid = row.get("CustomerId")
+            if cid:
+                customer_ids.append(cid)
+
+    if not customer_ids:
+        print("Error: no CustomerId values found in customer.csv", file=sys.stderr)
+        sys.exit(1)
+
+    # Command-line args: output file and record count
+    if len(sys.argv) != 3:
+        print("Usage: python generate_customer_tran.py <output-file> <num-records>")
+        sys.exit(1)
+    out_file = sys.argv[1]
+    try:
+        count = int(sys.argv[2])
+    except ValueError:
+        print("Invalid record count:", sys.argv[2], file=sys.stderr)
+        sys.exit(1)
+
+    # Generate transactions
+    start_date = datetime(2000, 1, 1)
+    end_date = datetime.now()
+
+    with open(out_file, 'w', newline='') as tf:
+        writer = csv.writer(tf)
+        writer.writerow(["TransactionId", "CustomerId", "Amount", "TransactionDate"])
+        for _ in range(count):
+            tid = str(uuid.uuid4())
+            cid = random.choice(customer_ids)
+            amount = round(random.uniform(0.01, 10000.0), 2)
+            tdate = random_date(start_date, end_date).strftime("%Y-%m-%dT%H:%M:%S")
+            writer.writerow([tid, cid, amount, tdate])

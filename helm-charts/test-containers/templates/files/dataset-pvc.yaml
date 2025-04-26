@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: dataset-pvc
+  name: {{ .Values.dataset.pvcName }}
   namespace: {{ .Values.namespace }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-2"
+    helm.sh/hook-weight: "-10000"
 spec:
   accessModes:
     - ReadWriteOnce

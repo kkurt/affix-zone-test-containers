@@ -1,49 +1,63 @@
 namespace: "affixzone-test-containers"
 testPvc: false
-datasets:
-    mountPath: "/datasets"
-    files:
-    - name: title.ratings.tsv
-      download: true
-      url: "https://datasets.imdbws.com/title.ratings.tsv.gz"
-    - name: name.basics.tsv
-      download: false
-      url: "https://datasets.imdbws.com/name.basics.tsv.gz"
+dataset:
+  mountPath: "/datasets"
+  pvcName: "dataset-pvc"
+  files:
+    - name: customer
+      dataSize: 100
+    - name: customer_tran
+      dataSize: 100
 db:
   postgresql:
-    install: false
+    install: true
     serviceName: "postgresql-service"
     port: "5432"
-    root:
-      username: "postgres"
-      password: "1234"
-      database: "postgres"
-    init:
-      testdb:
-        create: true
-        importFiles :
-          - name: name.basics.tsv
-            createScript: |
-              CREATE TABLE IF NOT EXISTS name_basics (
-                nconst TEXT PRIMARY KEY,
-                primaryName TEXT,
-                birthYear TEXT,
-                deathYear TEXT,
-                primaryProfession TEXT,
-                knownForTitles TEXT
-              );
-            loadScript: |
-              \copy name_basics FROM '{{ .Values.datasets.mountPath }}/name.basics.tsv' WITH (FORMAT csv, DELIMITER E'\t', QUOTE E'\b', ESCAPE E'\b', HEADER true, NULL '\N');
-          - name: title.ratings.tsv
-            createScript: |
-              CREATE TABLE IF NOT EXISTS title_ratings (
-                tconst TEXT PRIMARY KEY,
-                averageRating NUMERIC,
-                numVotes INT
-              );
-            loadScript: |
-              \copy title_ratings FROM '{{ .Values.datasets.mountPath }}/title.ratings.tsv' WITH (FORMAT csv, DELIMITER E'\t', HEADER true, NULL '\N');
-
+    users:
+      root:
+        username: "postgres"
+        password: "1234"
+      test:
+        username: "test"
+        password: "1234"
+    testdb:
+      name: "test"
+      create: true
+      import:
+        - name: customer
+          createScript: |            
+            CREATE TABLE {{ .name }} (
+              CustomerId       UUID        PRIMARY KEY,
+              CreateDate       DATE        NOT NULL,
+              FirstName        TEXT,
+              LastName         TEXT,
+              Email            TEXT        UNIQUE,
+              PhoneNumber      TEXT,
+              Address          TEXT,
+              City             TEXT,
+              Country          TEXT,
+              DateOfBirth      DATE,
+              IsActive         BOOLEAN,
+              CustomerType     TEXT,
+              LastUpdateDate   TIMESTAMP,
+              Notes            TEXT
+            );
+          loadScript: |
+            \copy customer
+              FROM '{{ .Values.dataset.mountPath }}/{{ .name }}.csv'
+              WITH (FORMAT csv, HEADER true);
+        - name: customer_tran
+          createScript: |            
+            CREATE TABLE {{ .name }} (
+              TransactionId    UUID        PRIMARY KEY,
+              CustomerId       UUID        REFERENCES customer(CustomerId),
+              Amount           NUMERIC,
+              TransactionDate  TIMESTAMP
+            );
+          loadScript: |
+            \copy customer_tran
+              FROM '{{ .Values.dataset.mountPath }}/{{ .name }}.csv'
+              WITH (FORMAT csv, HEADER true);
   oracle:
     install: false
     serviceName: "oracle-service"
@@ -100,6 +114,30 @@ db:
                 averageRating DECIMAL(3,1),
                 numVotes INTEGER
               )
+          - name: BankCustomerTransaction
+            createScript: |
+              CREATE TABLE bank_customer_transaction (
+                id NUMBER PRIMARY KEY,
+                customer_name VARCHAR2(200),
+                account_number VARCHAR2(50),
+                transaction_date DATE,
+                transaction_amount NUMBER,
+                transaction_type VARCHAR2(100)
+              );
+            loadScript: |
+              LOAD DATA INFILE '{{ .Values.datasets.mountPath }}/BankCustomerTransaction.csv'
+              INTO TABLE bank_customer_transaction
+              FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
+              TRAILING NULLCOLS
+              (
+                id,
+                customer_name,
+                account_number,
+                transaction_date "TO_DATE(:transaction_date, 'YYYY-MM-DD')",
+                transaction_amount,
+                transaction_type
+              )
+
   cassandra:
     install: false
     serviceName: "cassandra-service"
@@ -143,6 +181,23 @@ db:
               COPY {{ .Values.db.cassandra.keyspace }}.name_basics (nconst, primaryName, birthYear, deathYear, primaryProfession, knownForTitles)  
               FROM '$FILE_PATH' WITH DELIMITER='	' AND HEADER=TRUE AND NULL='\N';
 
+          - name: BankCustomerTransaction
+            createScript: |
+              CREATE KEYSPACE IF NOT EXISTS {{ .Values.db.cassandra.keyspace }}
+              WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+              USE {{ .Values.db.cassandra.keyspace }};
+              CREATE TABLE IF NOT EXISTS bank_customer_transaction (
+                id UUID PRIMARY KEY,
+                customer_name TEXT,
+                account_number TEXT,
+                transaction_date DATE,
+                transaction_amount DOUBLE,
+                transaction_type TEXT
+              );
+            loadScript: |
+              COPY {{ .Values.db.cassandra.keyspace }}.bank_customer_transaction (id, customer_name, account_number, transaction_date, transaction_amount, transaction_type)
+              FROM '$FILE_PATH' WITH DELIMITER=',' AND HEADER=TRUE AND NULL='';
+
 kafka:
   install: false
   installUI: true
@@ -156,7 +211,7 @@ kafka:
       password: "kafka"
   init: true
 minio:
-  install: true
+  install: false
   serviceName: "minio-service"
   port: 9000   # Default MinIO port, update if necessary
   testBucketName: "testbucket"
@@ -173,10 +228,13 @@ minio:
         - name: title.ratings.tsv
           bucket: |
             {{ .Values.minio.testBucketName }}
+        - name: BankCustomerTransaction
+          bucket: |
+            {{ .Values.minio.testBucketName }}
 superset:
     install: false
 iceberg:
-  install: true
+  install: false
   serviceName: "iceberg-service"
   port: 8181
   users:
