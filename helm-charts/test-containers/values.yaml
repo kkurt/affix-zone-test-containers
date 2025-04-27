@@ -60,7 +60,7 @@ db:
               WITH (FORMAT csv, HEADER true);
 
   oracle:
-    install: true                    # turn on Oracle support
+    install: false                    # turn on Oracle support
     serviceName: "oracle-service"
     port: "1521"
     oracleServiceName: "FREEPDB1"
@@ -136,66 +136,61 @@ db:
               Amount            CHAR        "TO_NUMBER(:Amount)",
                    TransactionDate   CHAR        "TO_TIMESTAMP(:TransactionDate,'YYYY-MM-DD\"T\"HH24:MI:SS')"
             )
-  cassandra:
-    install: false
-    serviceName: "cassandra-service"
-    port: "9042"
-    keyspace: "test"   # Note: this value now resides at .Values.db.cassandra.keyspace
-    users:
-      test:
-        username: "cassandra"
-        password: "cassandra"
-    init:
-      testdb:
-        create: true
-        importFiles:
-          - name: title.ratings.tsv
-            createScript: |
-              CREATE KEYSPACE IF NOT EXISTS {{ .Values.db.cassandra.keyspace }}
-              WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
-              USE {{ .Values.db.cassandra.keyspace }};
-              CREATE TABLE IF NOT EXISTS title_ratings (
-                tconst TEXT PRIMARY KEY,
-                averageRating FLOAT,
-                numVotes INT
-              );
-            loadScript: |
-              COPY {{ .Values.db.cassandra.keyspace }}.title_ratings (tconst, averageRating, numVotes) 
-              FROM '$FILE_PATH' WITH DELIMITER='	' AND HEADER=TRUE AND NULL='N';
-          - name: name.basics.tsv
-            createScript: |
-              CREATE KEYSPACE IF NOT EXISTS {{ .Values.db.cassandra.keyspace }}
-              WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
-              USE {{ .Values.db.cassandra.keyspace }};
-              CREATE TABLE IF NOT EXISTS name_basics (
-                nconst TEXT PRIMARY KEY,
-                primaryName TEXT,
-                birthYear TEXT,
-                deathYear TEXT,
-                primaryProfession TEXT,
-                knownForTitles TEXT
-              );
-            loadScript: |
-              COPY {{ .Values.db.cassandra.keyspace }}.name_basics (nconst, primaryName, birthYear, deathYear, primaryProfession, knownForTitles)  
-              FROM '$FILE_PATH' WITH DELIMITER='	' AND HEADER=TRUE AND NULL='\N';
+cassandra:
+  install: true                     # turn on Cassandra support
+  serviceName: "cassandra-service"
+  port: "9042"
+  keyspace: "test"
+  users:
+    test:
+      username: "cassandra"
+      password: "cassandra"
+  testdb:
+    create: true
+    import:
+      - name: customer
+        createScript: |          
+          CREATE KEYSPACE IF NOT EXISTS {{ .Values.cassandra.keyspace }}
+            WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+          CREATE TABLE IF NOT EXISTS {{ .Values.cassandra.keyspace }}.customer (
+            CustomerId       uuid        PRIMARY KEY,
+            CreateDate       date        ,
+            FirstName        text,
+            LastName         text,
+            Email            text,
+            PhoneNumber      text,
+            Address          text,
+            City             text,
+            Country          text,
+            DateOfBirth      date,
+            IsActive         boolean,
+            CustomerType     text,
+            LastUpdateDate   timestamp,
+            Notes            text
+          );
+        loadScript: |
+          COPY {{ .Values.cassandra.keyspace }}.customer (
+            CustomerId,CreateDate,FirstName,LastName,Email,PhoneNumber,
+            Address,City,Country,DateOfBirth,IsActive,CustomerType,
+            LastUpdateDate,Notes
+          )
+          FROM '{{ .Values.dataset.mountPath }}/customer.csv'
+          WITH HEADER = TRUE;
 
-          - name: BankCustomerTransaction
-            createScript: |
-              CREATE KEYSPACE IF NOT EXISTS {{ .Values.db.cassandra.keyspace }}
-              WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
-              USE {{ .Values.db.cassandra.keyspace }};
-              CREATE TABLE IF NOT EXISTS bank_customer_transaction (
-                id UUID PRIMARY KEY,
-                customer_name TEXT,
-                account_number TEXT,
-                transaction_date DATE,
-                transaction_amount DOUBLE,
-                transaction_type TEXT
-              );
-            loadScript: |
-              COPY {{ .Values.db.cassandra.keyspace }}.bank_customer_transaction (id, customer_name, account_number, transaction_date, transaction_amount, transaction_type)
-              FROM '$FILE_PATH' WITH DELIMITER=',' AND HEADER=TRUE AND NULL='';
-
+      - name: customer_tran
+        createScript: |
+          CREATE TABLE IF NOT EXISTS {{ .Values.cassandra.keyspace }}.customer_tran (
+            TransactionId    uuid        PRIMARY KEY,
+            CustomerId       uuid,
+            Amount           decimal,
+            TransactionDate  timestamp
+          );
+        loadScript: |
+          COPY {{ .Values.cassandra.keyspace }}.customer_tran (
+            TransactionId,CustomerId,Amount,TransactionDate
+          )
+          FROM '{{ .Values.dataset.mountPath }}/customer_tran.csv'
+          WITH HEADER = TRUE;
 kafka:
   install: false
   installUI: true

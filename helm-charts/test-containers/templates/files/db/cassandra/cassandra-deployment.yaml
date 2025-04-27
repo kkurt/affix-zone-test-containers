@@ -1,4 +1,4 @@
-{{- if .Values.db.cassandra.install }}
+{{- if .Values.cassandra.install }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,7 +24,7 @@ spec:
           image: bitnami/cassandra:latest
           ports:
             - name: cassandra
-              containerPort: {{ .Values.db.cassandra.port }}
+              containerPort: {{ .Values.cassandra.port }}
           env:
             - name: CASSANDRA_AUTHENTICATOR
               value: "AllowAllAuthenticator" # Set to PasswordAuthenticator if authentication is required
@@ -35,7 +35,7 @@ spec:
               mountPath: /bitnami/cassandra
             - name: cassandra-init-scripts
               mountPath: /docker-entrypoint-initdb.d
-            - mountPath: /{{ .Values.datasets.mountPath }}
+            - mountPath: /{{ .Values.dataset.mountPath }}
               name: dataset-pvc
       volumes:
         - name: data

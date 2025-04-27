@@ -1,4 +1,4 @@
-{{- if .Values.db.cassandra.install }}
+{{- if .Values.cassandra.install }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

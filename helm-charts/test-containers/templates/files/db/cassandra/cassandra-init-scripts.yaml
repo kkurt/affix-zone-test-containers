@@ -1,56 +1,44 @@
-{{- if .Values.db.cassandra.install }}
+{{- if .Values.cassandra.install }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: cassandra-init-scripts
+  namespace: {{ .Values.namespace }}
 data:
   init-db.sh: |
     #!/bin/bash
-    set -e
+    set -euo pipefail
 
-    echo "Cassandra init-script started!"
+    echo "→ Cassandra init-script starting…"
 
-    # Cassandra settings
-    CASSANDRA_HOST="{{ .Values.db.cassandra.serviceName }}"
-    CASSANDRA_USER="{{ .Values.db.cassandra.users.test.username }}"
-    CASSANDRA_PASSWORD="{{ .Values.db.cassandra.users.test.password }}"
-    KEYSPACE="{{ .Values.db.cassandra.keyspace }}"
-    # Use the datasets mount path defined in your values.yaml (the shared PVC path)
-    DATA_DIR="{{ .Values.datasets.mountPath }}"
+    CASS_HOST={{ .Values.cassandra.serviceName }}
+    CASS_PORT={{ .Values.cassandra.port }}
+    KEYSPACE={{ .Values.cassandra.keyspace }}
+    CQLSH="cqlsh $CASS_HOST $CASS_PORT -u {{ .Values.cassandra.users.test.username }} -p {{ .Values.cassandra.users.test.password }}"
 
-    # Optionally install curl
-    apt update && apt install -y curl
+    DATASET="{{ .Values.dataset.mountPath }}"
 
-    # Capture the global context so that tpl can access values outside the range loop.
-    {{- $root := . -}}
+    # 1) wait for Cassandra
+    for i in {1..10}; do
+      echo "exit" | $CQLSH &>/dev/null && break
+      echo "Waiting for Cassandra… attempt $i/10"; sleep 2
+    done
+    echo "✔ Cassandra is ready."
 
-    {{- if .Values.db.cassandra.init.testdb.create }}
-      {{- range .Values.db.cassandra.init.testdb.importFiles }}
-        echo "Processing file {{ .name }}..."
-        # Construct the full file path (assuming the file was extracted to DATA_DIR)
-        FILE_PATH="${DATA_DIR}/{{ .name }}"
-        if [ -f "$FILE_PATH" ]; then
-          echo "File $FILE_PATH exists. Proceeding with import for {{ .name }}."
+    # 2) Apply each createScript + loadScript
+    {{- $root := . }}
+    {{- $imports := default (list) $root.Values.cassandra.testdb.import }}
 
-          echo "Executing create CQL script for {{ .name }}..."
-          # Evaluate the create script using tpl so that placeholders  are substituted
-          echo "{{ tpl .createScript $root | nindent 4 }}" | sed 's/\\n/\n/g' | cqlsh -u ${CASSANDRA_USER} -p ${CASSANDRA_PASSWORD}
+    {{- if and (.Values.cassandra.testdb.create) (gt (len $imports) 0) }}
+      {{- range $imp := $imports }}
+    echo "→ creating schema for '{{ $imp.name }}'…"
+    echo "{{ tpl $imp.createScript $root | replace "\n" " " | trim }}" | $CQLSH
 
-          echo "Executing load CQL script for {{ .name }}..."
-          # Evaluate the load script and substitute $FILE_PATH with the actual file path.
-          echo "{{ tpl .loadScript $root | nindent 4 }}" | sed "s|\$FILE_PATH|${FILE_PATH}|g" | cqlsh -u ${CASSANDRA_USER} -p ${CASSANDRA_PASSWORD}
+    echo "→ loading data for '{{ $imp.name }}'…"
+    echo "{{ tpl $imp.loadScript $root | replace "\n" " " | trim }}" | $CQLSH
 
-          if [ $? -ne 0 ]; then
-            echo "Data import for {{ .name }} failed. Exiting."
-            exit 1
-          fi
-
-          ls -al ${DATA_DIR}
-        else
-          echo "File $FILE_PATH does not exist. Skipping import for {{ .name }}."
-        fi
       {{- end }}
     {{- end }}
 
-    echo "Cassandra init-script completed!"
+    echo "→ Cassandra init-script finished."
 {{- end }}
