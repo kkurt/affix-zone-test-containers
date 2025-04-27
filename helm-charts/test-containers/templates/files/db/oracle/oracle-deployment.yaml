@@ -1,8 +1,10 @@
+# templates/oracle-deployment.yaml
 {{- if .Values.db.oracle.install }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: oracle
+  namespace: {{ .Values.namespace }}
   labels:
     app: oracle
 spec:
@@ -16,9 +18,9 @@ spec:
         app: oracle
     spec:
       securityContext:
-        runAsUser: 54321    # Oracle User
-        runAsGroup: 54321   # Oinstall group
-        fsGroup: 54321      # Oinstall group
+        runAsUser: 54321
+        runAsGroup: 54321
+        fsGroup: 54321
       containers:
         - name: oracle
           image: gvenzl/oracle-free
@@ -28,21 +30,18 @@ spec:
               hostPort: {{ .Values.db.oracle.port }}
           env:
             - name: ORACLE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: oracle-secret
-                  key: oracle-password
+              value: "{{ .Values.db.oracle.users.root.password }}"
             - name: APP_USER
-              value: {{ .Values.db.oracle.users.test.username | quote}}
+              value: "{{ .Values.db.oracle.users.test.username }}"
             - name: APP_USER_PASSWORD
-              value: {{ .Values.db.oracle.users.test.password | quote}}
+              value: "{{ .Values.db.oracle.users.test.password }}"
           volumeMounts:
             - name: oracle-volume
               mountPath: /opt/oracle/oradata
             - name: oracle-init-scripts
               mountPath: /docker-entrypoint-initdb.d
-            - mountPath: /{{ .Values.datasets.mountPath }}
-              name: dataset-pvc
+            - name: data
+              mountPath: {{ .Values.dataset.mountPath }}
       volumes:
         - name: oracle-volume
           persistentVolumeClaim:
@@ -50,7 +49,7 @@ spec:
         - name: oracle-init-scripts
           configMap:
             name: oracle-init-scripts
-        - name: dataset-pvc
+        - name: data
           persistentVolumeClaim:
-            claimName: dataset-pvc
+            claimName: {{ .Values.dataset.pvcName }}
 {{- end }}

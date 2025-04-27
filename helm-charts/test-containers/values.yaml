@@ -10,7 +10,7 @@ dataset:
       dataSize: 100
 db:
   postgresql:
-    install: true
+    install: false
     serviceName: "postgresql-service"
     port: "5432"
     users:
@@ -58,8 +58,9 @@ db:
             \copy customer_tran
               FROM '{{ .Values.dataset.mountPath }}/{{ .name }}.csv'
               WITH (FORMAT csv, HEADER true);
+
   oracle:
-    install: false
+    install: true                    # turn on Oracle support
     serviceName: "oracle-service"
     port: "1521"
     oracleServiceName: "FREEPDB1"
@@ -70,74 +71,71 @@ db:
       test:
         username: "TEST"
         password: "12345"
-    init:
-      testdb:
-        create: true
-        importFiles :
-          - name: name.basics.tsv
-            createScript:
-              CREATE TABLE name_basics (
-              nconst VARCHAR2(20) PRIMARY KEY,
-              primaryName VARCHAR2(200),
-              birthYear VARCHAR2(10),
-              deathYear VARCHAR2(10),
-              primaryProfession VARCHAR2(400),
-              knownForTitles VARCHAR2(400)
-              );
-            loadScript: |
-              LOAD DATA INFILE '{{ .Values.datasets.mountPath }}/name.basics.tsv'
-              INTO TABLE name_basics
-              FIELDS TERMINATED BY '\t'
-              TRAILING NULLCOLS
-              (
-              nconst CHAR(20),
-              primaryName CHAR(200),
-              birthYear CHAR(10),
-              deathYear CHAR(10),
-              primaryProfession CHAR(400),
-              knownForTitles CHAR(400)
-              )
-          - name: title.ratings.tsv
-            createScript:
-              CREATE TABLE title_ratings (
-                tconst VARCHAR2(20) PRIMARY KEY,
-                averageRating NUMERIC,
-                numVotes INT
-              );
-            loadScript: |
-              LOAD DATA INFILE '{{ .Values.datasets.mountPath }}/title.ratings.tsv'
-              INTO TABLE title_ratings
-              FIELDS TERMINATED BY '\t'
-              TRAILING NULLCOLS
-              (
-                tconst CHAR(20),
-                averageRating DECIMAL(3,1),
-                numVotes INTEGER
-              )
-          - name: BankCustomerTransaction
-            createScript: |
-              CREATE TABLE bank_customer_transaction (
-                id NUMBER PRIMARY KEY,
-                customer_name VARCHAR2(200),
-                account_number VARCHAR2(50),
-                transaction_date DATE,
-                transaction_amount NUMBER,
-                transaction_type VARCHAR2(100)
-              );
-            loadScript: |
-              LOAD DATA INFILE '{{ .Values.datasets.mountPath }}/BankCustomerTransaction.csv'
-              INTO TABLE bank_customer_transaction
-              FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
-              TRAILING NULLCOLS
-              (
-                id,
-                customer_name,
-                account_number,
-                transaction_date "TO_DATE(:transaction_date, 'YYYY-MM-DD')",
-                transaction_amount,
-                transaction_type
-              )
+    testdb:
+      name: "TEST"
+      create: true
+      import:
+        - name: customer
+          createScript: |
+            CREATE TABLE customer (
+              CustomerId       VARCHAR2(36) PRIMARY KEY,
+              CreateDate       DATE          NOT NULL,
+              FirstName        VARCHAR2(50),
+              LastName         VARCHAR2(50),
+              Email            VARCHAR2(100),
+              PhoneNumber      VARCHAR2(50),
+              Address          VARCHAR2(200),
+              City             VARCHAR2(50),
+              Country          VARCHAR2(50),
+              DateOfBirth      DATE,
+              IsActive         NUMBER(1)      DEFAULT 1
+                                 CONSTRAINT chk_customer_isactive
+                                   CHECK (IsActive IN (0,1)),
+              CustomerType     VARCHAR2(20),
+              LastUpdateDate   TIMESTAMP,
+              Notes            VARCHAR2(4000)
+            );
+          loadScript: |
+            LOAD DATA
+            INFILE '{{ .Values.dataset.mountPath }}/customer.csv'
+            APPEND
+            INTO TABLE customer
+            FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
+            ( CustomerId         CHAR(36),
+              CreateDate         CHAR(10)   "TO_DATE(:CreateDate,'YYYY-MM-DD')",
+              FirstName          CHAR,
+              LastName           CHAR,
+              Email              CHAR,
+              PhoneNumber        CHAR,
+              Address            CHAR,
+              City               CHAR,
+              Country            CHAR,
+              DateOfBirth        CHAR(10)   "TO_DATE(:DateOfBirth,'YYYY-MM-DD')",
+              IsActive         CHAR(5)    "DECODE(LOWER(:IsActive),'true',1,'false',0,0)",
+              CustomerType       CHAR,
+              LastUpdateDate     CHAR(19)   "TO_TIMESTAMP(:LastUpdateDate,'YYYY-MM-DD\"T\"HH24:MI:SS')",
+              Notes              CHAR
+            )
 
+        - name: customer_tran
+          createScript: |
+            CREATE TABLE customer_tran (
+              TransactionId    VARCHAR2(36) PRIMARY KEY,
+              CustomerId       VARCHAR2(36) REFERENCES customer(CustomerId),
+              Amount           NUMBER(15,2),
+              TransactionDate  TIMESTAMP
+            );
+          loadScript: |
+            LOAD DATA
+            INFILE '{{ .Values.dataset.mountPath }}/customer_tran.csv'
+            APPEND
+            INTO TABLE customer_tran
+            FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
+            ( TransactionId     CHAR(36),
+              CustomerId        CHAR(36),
+              Amount            CHAR        "TO_NUMBER(:Amount)",
+                   TransactionDate   CHAR        "TO_TIMESTAMP(:TransactionDate,'YYYY-MM-DD\"T\"HH24:MI:SS')"
+            )
   cassandra:
     install: false
     serviceName: "cassandra-service"
