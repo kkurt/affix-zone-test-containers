@@ -51,21 +51,15 @@ spec:
             - containerPort: 9001
           env:
             - name: MINIO_ROOT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: minio-secret
-                  key: minio-root-user
+              value: "minioadmin"
             - name: MINIO_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: minio-secret
-                  key: minio-root-password
+              value: "minioadmin"
           volumeMounts:
             - name: minio-volume
               mountPath: /data
             - name: minio-init-scripts
               mountPath: /docker-entrypoint-initminio.d
-            - mountPath: /{{ .Values.datasets.mountPath }}
+            - mountPath: /{{ .Values.dataset.mountPath }}
               name: dataset-pvc
       volumes:
         - name: minio-volume

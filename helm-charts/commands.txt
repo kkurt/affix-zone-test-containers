@@ -1,0 +1,24 @@
+helm package test-containers
+
+helm uninstall affixzone-test-containers --namespace affixzone-test-containers
+
+helm install affixzone-test-containers affixzone-test-containers-0.1.0.tgz --create-namespace --namespace affixzone-test-containers
+
+helm upgrade -install affixzone-test-containers 0.1.0.tgz --create-namespace --namespace affixzone-test-containers
+
+kubectl get pods --namespace affix zone-test-containers
+
+.\FinalPackage.ps1 main test
+
+kubectl port-forward svc/postgresql-service 54000:5432 -naffixzone-test-containers
+
+kubectl delete namespace affixzone-test-containers
+
+
+kubectl get pods -l app=oracle -n affixzone-test-containers -o jsonpath="{.items[0].metadata.name}" | ForEach-Object { kubectl logs $_ -n affixzone-test-containers }
+
+
+
+kubectl port-forward svc/oracle-service 1521:1521 -naffixzone-test-containers
+kubectl port-forward svc/cassandra-service 9042:9042 -naffixzone-test-containers
+

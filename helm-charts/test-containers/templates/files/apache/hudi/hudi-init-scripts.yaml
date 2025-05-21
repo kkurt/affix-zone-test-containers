@@ -9,7 +9,7 @@ data:
     set -e
 
     echo "Apache Hudi init-script started!"
-    DATASET_PATH="{{ .Values.datasets.mountPath }}"
+    DATASET_PATH="{{ .Values.dataset.mountPath }}"
     HUDI_BASE_PATH="/tmp/hudi_output"
 
     mkdir -p "$HUDI_BASE_PATH"

@@ -39,15 +39,9 @@ spec:
                   key: iceberg-password
             # --- Added for MinIO Integration ---
             - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: minio-secret
-                  key: minio-root-password
+              value: "minioadmin"
             - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: minio-secret
-                  key: minio-root-user
+              value: "minioadmin"
             # Set the warehouse directory to the test bucket in MinIO using the S3A scheme
             - name: ICEBERG_WAREHOUSE
               value: "s3a://{{ .Values.minio.testBucketName}}/"

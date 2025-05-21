@@ -1,38 +1,18 @@
 <#
 .SYNOPSIS
-    Dynamically port-forwards services in a given namespace (configured in the script)
-    excluding specified services and optionally applying custom port mappings for each port.
-
+    Kubernetes port-forward automation with process and port cleanup and colored output.
 .DESCRIPTION
-    This script defines a Kubernetes namespace, a list of service names to exclude, and an array
-    of custom service mappings. Each custom service mapping has a name and a 'mappings' array,
-    where each entry defines a localPort and a remotePort. For a service matching a custom mapping,
-    the script will compare each defined service port (remote port) to the custom mapping's remotePort.
-    If a match is found, that port is forwarded using the custom local port; otherwise, the default
-    mapping (port:port) is used. Before starting new port-forward background jobs, the script cleans up
-    any existing jobs with names starting with the namespace prefix. It then retrieves all services
-    in the namespace and, for each service (excluding those filtered out), builds an array of port mappings
-    and starts a background job that runs "kubectl port-forward" with all the mappings. When you press Enter,
-    all port-forward jobs are stopped and removed.
-
+    - Starts port-forward for all services (excluding specified) with optional custom port mappings.
+    - Before starting, stops any process using the intended local port.
+    - When stopping, kills any process using those ports (even if not started by this script).
+    - Colored status output (PowerShell 7+).
 .NOTES
-    - Ensure that kubectl is installed and configured in your environment.
-    - Adjust the variables $Namespace, $ExcludeServices, and $CustomServices as needed.
+    Requires PowerShell 7+ and kubectl.
 #>
-
-# --- Configuration ---
-# Set the target Kubernetes namespace
+#Get-Process -Id (Get-NetTCPConnection -LocalPort "8401").OwningProcess| Stop-Process
+# --- CONFIGURATION ---
 $Namespace = "affixzone-test-containers"
-
-# Provide a list of service names to exclude. Leave as an empty array if no exclusions.
 $ExcludeServices = @("svc-to-exclude1", "svc-to-exclude2")
-
-# Define custom service port mappings.
-# Each entry is an object with:
-#   - name: the service name (must match exactly as deployed)
-#   - mappings: an array of mapping objects where each mapping defines:
-#         localPort: the desired local port
-#         remotePort: the container (service) port to which the local port should forward.
 $CustomServices = @(
     [PSCustomObject]@{
         name = "minio-service"
@@ -49,110 +29,168 @@ $CustomServices = @(
         )
     }
 )
-# --- End Configuration ---
+# --- END CONFIGURATION ---
 
-Write-Host "`nCleaning up any pre-existing port-forward jobs with the namespace prefix '$Namespace-'..."
+# Hashtable: ServiceName => [PSCustomObject]@{ Proc = process; LocalPorts = @(ports) }
+$PortForwardProcs = @{}
 
-# Find and stop existing jobs whose names start with the namespace prefix.
-$existingJobs = Get-Job | Where-Object { $_.Name -like "$Namespace-*" }
-if ($existingJobs) {
-    foreach ($job in $existingJobs) {
-        Write-Host "Stopping pre-existing job: $($job.Name) (ID: $($job.Id))"
-        Stop-Job $job -ErrorAction SilentlyContinue
-        Remove-Job $job -ErrorAction SilentlyContinue
+function Write-Colored($Message, $Color = 'White') {
+    $colorCode = $PSStyle.Foreground.$Color
+    Write-Host "$colorCode$Message$($PSStyle.Reset)"
+}
+
+function Stop-ExistingPortForward {
+    param([int]$Port)
+    $tcp = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
+    if ($tcp) {
+        $pids = $tcp | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($processId in $pids) {
+            try {
+                $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
+                if ($proc) {
+                    Write-Colored "Stopping existing process (PID: $processId) on port $Port..." "Yellow"
+                    Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+                    Write-Colored "Stopped existing process (PID: $processId) on port $Port." "Green"
+                }
+            } catch {
+                Write-Colored "Failed to stop process (PID: $processId) on port ${Port}: $_" "Red"
+            }
+        }
     }
-    Write-Host "Pre-existing jobs cleaned up."
-} else {
-    Write-Host "No matching pre-existing jobs found."
 }
 
-Write-Host "`nRetrieving services from namespace '$Namespace'..."
+
+Write-Colored "`nRetrieving services from namespace '$Namespace'..." "Cyan"
 if ($ExcludeServices.Count -gt 0) {
-    Write-Host "Excluding services:" ($ExcludeServices -join ', ')
+    Write-Colored "Excluding services: $($ExcludeServices -join ', ')" "Cyan"
 } else {
-    Write-Host "No services will be excluded."
+    Write-Colored "No services will be excluded." "Cyan"
 }
 
-# Retrieve all services in the specified namespace as JSON and convert to a PowerShell object.
 try {
     $servicesJson = kubectl get svc -n $Namespace -o json | ConvertFrom-Json
 } catch {
-    Write-Error "Failed to retrieve services from namespace '$Namespace'. Please check your kubectl configuration."
+    Write-Colored "Failed to retrieve services from namespace '$Namespace'. Please check your kubectl configuration." "Red"
     exit 1
 }
-
 if (-not $servicesJson.items) {
-    Write-Host "No services found in namespace '$Namespace'. Exiting."
+    Write-Colored "No services found in namespace '$Namespace'. Exiting." "Yellow"
     exit 0
 }
 
-# Initialize an array to store new background jobs for port forwarding.
-$jobs = @()
-
 foreach ($svc in $servicesJson.items) {
     $svcName = $svc.metadata.name
-
-    # Skip excluded services.
     if ($ExcludeServices -contains $svcName) {
-        Write-Host "Skipping excluded service: $svcName"
+        Write-Colored "Skipping excluded service: $svcName" "Yellow"
         continue
     }
-
-    # Verify that the service has at least one port defined.
     if (-not $svc.spec.ports -or $svc.spec.ports.Count -eq 0) {
-        Write-Host "Service '$svcName' has no ports defined. Skipping port-forward."
+        Write-Colored "Service '$svcName' has no ports defined. Skipping." "Yellow"
         continue
     }
 
-    # Build an array of port mappings for the service.
     $mappingArray = @()
-    # Look up a custom mapping for this service (if any).
+    $forwardedPorts = @()
     $customMapping = $CustomServices | Where-Object { $_.name -eq $svcName }
-
     foreach ($portDef in $svc.spec.ports) {
         $servicePort = $portDef.port
-        # Look for a custom mapping whose remotePort matches this service port.
+        $localPort = $servicePort
         $customForThisPort = $null
         if ($customMapping -and $customMapping.mappings) {
             $customForThisPort = $customMapping.mappings | Where-Object { $_.remotePort -eq $servicePort } | Select-Object -First 1
         }
-
         if ($customForThisPort) {
+            $localPort = $customForThisPort.localPort
             $mappingArray += "$($customForThisPort.localPort):$($servicePort)"
-        }
-        else {
+        } else {
             $mappingArray += "$($servicePort):$($servicePort)"
         }
+        $forwardedPorts += $localPort
+
+        # Clean up any process already using this port
+        Stop-ExistingPortForward -Port $localPort
     }
 
-    Write-Host "Starting port-forward for service '$svcName' with mappings: $($mappingArray -join ' ')..."
+    $args = @("port-forward", "svc/$svcName")
+    $args += $mappingArray
+    $args += @("-n", $Namespace)
 
-    # Start a background job for the port-forward command.
-    $jobName = "$Namespace-$svcName-forward"
-    $job = Start-Job -Name $jobName -ScriptBlock {
-        param($ns, $name, [string[]]$mappings)
-        kubectl port-forward "svc/$name" $mappings -n $ns
-    } -ArgumentList $Namespace, $svcName, $mappingArray
+    Write-Colored "Starting port-forward for $svcName with mappings: $($mappingArray -join ' ')" "Green"
 
-    $jobs += $job
+    $proc = Start-Process -FilePath "kubectl" -ArgumentList $args -PassThru -WindowStyle Hidden
+    $PortForwardProcs[$svcName] = [PSCustomObject]@{
+        Proc = $proc
+        LocalPorts = $forwardedPorts
+    }
 }
 
-Write-Host ""
-Write-Host "----------------------------------------"
-Write-Host "Port forwarding is now running for the above services."
-Write-Host "Press Enter to stop all port-forward jobs..."
-Write-Host "----------------------------------------"
+if ($PortForwardProcs.Count -eq 0) {
+    Write-Colored "No port-forwards started. Exiting." "Yellow"
+    exit 0
+}
+
+Write-Colored ""
+Write-Colored "----------------------------------------" "Cyan"
+Write-Colored "Port forwarding is now running for the above services." "Cyan"
+Write-Colored "Press Enter to stop all port-forward processes..." "Cyan"
+Write-Colored "----------------------------------------" "Cyan"
 [void][System.Console]::ReadLine()
 
-Write-Host "`nStopping port-forward jobs..."
-foreach ($job in $jobs) {
-    Write-Host "Stopping job $($job.Name) (ID: $($job.Id))..."
-    try {
-        Stop-Job $job -ErrorAction SilentlyContinue
-        Remove-Job $job -ErrorAction SilentlyContinue
-    } catch {
-        Write-Host "Error stopping job $($job.Name) (ID: $($job.Id)): $_"
+Write-Colored "`n[Stop] Stopping all port-forward processes..." "Magenta"
+
+# 1. Try to stop the port-forward processes started by this script
+foreach ($svcName in $PortForwardProcs.Keys) {
+    $procInfo = $PortForwardProcs[$svcName]
+    $proc = $procInfo.Proc
+    if ($proc -and -not $proc.HasExited) {
+        Write-Colored "Stopping process for $svcName (PID: $($proc.Id))..." "Yellow"
+        try {
+            Stop-Process -Id $proc.Id -ErrorAction Stop
+
+            # Wait until process exits (up to 20s)
+            $maxWait = 20
+            $interval = 0.5
+            $elapsed = 0
+            while (-not $proc.HasExited -and $elapsed -lt $maxWait) {
+                Start-Sleep -Seconds $interval
+                $elapsed += $interval
+            }
+
+            if ($proc.HasExited) {
+                Write-Colored "Stopped:  $svcName (PID: $($proc.Id))" "Green"
+            } else {
+                Write-Colored "Timeout waiting for: $svcName (PID: $($proc.Id)), may still be running!" "Red"
+            }
+        } catch {
+            Write-Colored "Error stopping: $svcName (PID: $($proc.Id)): $_" "Red"
+        }
+    } else {
+        Write-Colored "Already exited: $svcName (PID: $($proc.Id))" "DarkGray"
     }
 }
 
-Write-Host "All port-forward jobs have been stopped and removed."
+# 2. For **each forwarded port**, make sure no process is still listening; kill any stragglers
+$allForwardedPorts = $PortForwardProcs.Values | ForEach-Object { $_.LocalPorts } | Select-Object -Unique
+
+foreach ($port in $allForwardedPorts) {
+    $tcp = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
+    if ($tcp) {
+        $pids = $tcp | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($processId in $pids) {
+            try {
+                $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
+                if ($proc) {
+                    Write-Colored "Final cleanup: Stopping process (PID: $processId) still using port $port..." "Yellow"
+                    Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+                    Write-Colored "Final cleanup: Stopped process (PID: $processId) on port $port." "Green"
+                }
+            } catch {
+                Write-Colored "Final cleanup: Failed to stop process (PID: $processId) on port ${port}: $_" "Red"
+            }
+        }
+    }
+}
+
+
+Write-Colored "All port-forward processes and port listeners have been stopped." "Green"
+

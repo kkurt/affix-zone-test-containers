@@ -29,7 +29,7 @@ data:
     mc mb local/testbucket || true
 
     # Get the dataset mount path from values (for example, "/datasets")
-    MOUNT_PATH={{ .Values.datasets.mountPath }}
+    MOUNT_PATH={{ .Values.dataset.mountPath }}
     # Optionally, get bucket name from values (default to "testbucket")
     BUCKET_NAME={{ .Values.minio.testBucketName }}
 

@@ -20,7 +20,7 @@ spec:
           image: apache/hudi:0.14.0-spark3.3
           command: ["/bin/bash", "/docker-entrypoint-initdb.d/init-db.sh"]
           volumeMounts:
-            - mountPath: /{{ .Values.datasets.mountPath }}
+            - mountPath: /{{ .Values.dataset.mountPath }}
               name: dataset-pvc
             - name: init-scripts
               mountPath: /docker-entrypoint-initdb.d

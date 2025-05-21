@@ -5,12 +5,12 @@ dataset:
   pvcName: "dataset-pvc"
   files:
     - name: customer
-      dataSize: 100
+      dataSize: 100000
     - name: customer_tran
-      dataSize: 100
+      dataSize: 10000
 db:
   postgresql:
-    install: false
+    install: true
     serviceName: "postgresql-service"
     port: "5432"
     users:
@@ -60,7 +60,7 @@ db:
               WITH (FORMAT csv, HEADER true);
 
   oracle:
-    install: false                    # turn on Oracle support
+    install: true                    # turn on Oracle support
     serviceName: "oracle-service"
     port: "1521"
     oracleServiceName: "FREEPDB1"
@@ -137,7 +137,7 @@ db:
                    TransactionDate   CHAR        "TO_TIMESTAMP(:TransactionDate,'YYYY-MM-DD\"T\"HH24:MI:SS')"
             )
 cassandra:
-  install: true                     # turn on Cassandra support
+  install: false                     # turn on Cassandra support
   serviceName: "cassandra-service"
   port: "9042"
   keyspace: "test"
@@ -204,7 +204,7 @@ kafka:
       password: "kafka"
   init: true
 minio:
-  install: false
+  install: true
   serviceName: "minio-service"
   port: 9000   # Default MinIO port, update if necessary
   testBucketName: "testbucket"
@@ -215,13 +215,10 @@ minio:
   init:
     testdata:
       importFiles:
-        - name: name.basics.tsv
+        - name: customer.csv
           bucket: |
             {{ .Values.minio.testBucketName }}
-        - name: title.ratings.tsv
-          bucket: |
-            {{ .Values.minio.testBucketName }}
-        - name: BankCustomerTransaction
+        - name: customer_tran.csv
           bucket: |
             {{ .Values.minio.testBucketName }}
 superset:

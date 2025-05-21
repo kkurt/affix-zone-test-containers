@@ -39,7 +39,7 @@ data:
                 cdate = random_date(start_date, end_date).strftime("%Y-%m-%d")
                 fn = fake.first_name()
                 ln = fake.last_name()
-                email = f"{fn.lower()}.{ln.lower()}{random.randint(1,9999)}@example.com"
+                email = f"{fn.lower()}.{ln.lower()}{random.randint(1,99999)}@example{random.randint(1,99999)}.com"
                 phone = fake.phone_number()
                 addr = fake.street_address()
                 city = fake.city()
