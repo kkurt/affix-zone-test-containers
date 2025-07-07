@@ -1,0 +1,19 @@
+namespace: "affixzone-test-containers"
+testPvc: false
+testPod: true
+dataset:
+  mountPath: "/datasets"
+  pvcName: "dataset-pvc"
+  clearAll: false
+  files:
+    - configMapName: customer-generator-script
+      fileName: "customer100k.csv"
+      dataSize: 100000
+      rank: 1
+    - configMapName: customer-tran-generator-script
+      fileName: "customer_tran100m.csv"
+      masterDsName: "customer100k.csv"
+      dataSize: 100000000
+      rank: 2
+script:
+  workers: 4

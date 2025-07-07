@@ -35,6 +35,10 @@ spec:
               mountPath: /docker-entrypoint-initdb.d
             - mountPath: /{{ .Values.dataset.mountPath }}
               name: dataset-pvc
+            - name: postgresql-pg-hba-file
+              mountPath: /opt/bitnami/postgresql/conf/pg_hba.conf
+              subPath: pg_hba.conf
+              readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -42,10 +46,13 @@ spec:
         - name: postgresql-init-scripts
           configMap:
             name: postgresql-init-scripts
-        - name: postgresql-pg-hba-file
-          configMap:
-            name: postgresql-pg-hba-file
         - name: dataset-pvc
           persistentVolumeClaim:
             claimName: dataset-pvc
+        - name: postgresql-pg-hba-file
+          configMap:
+            name: postgresql-pg-hba-config
+            items:
+              - key: pg_hba.conf
+                path: pg_hba.conf
 {{- end }}

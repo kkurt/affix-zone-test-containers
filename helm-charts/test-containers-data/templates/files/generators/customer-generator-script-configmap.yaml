@@ -1,0 +1,111 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: customer-generator-script
+  namespace: {{ .Values.namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-100"
+data:
+  customer-generator-script.py: |-
+    #!/usr/bin/env python3
+    import csv, random, uuid, sys, time
+    from datetime import datetime, timedelta
+    from faker import Faker
+    from threading import Thread
+    from queue import Queue
+    import numpy as np
+
+    fake = Faker()
+
+    def random_date(start, end, size):
+        start_ts = int(start.timestamp())
+        end_ts = int(end.timestamp())
+        timestamps = np.random.randint(start_ts, end_ts, size)
+        return [datetime.fromtimestamp(ts).strftime("%Y-%m-%d") for ts in timestamps]
+
+    def random_date_time(start, end, size):
+        start_ts = int(start.timestamp())
+        end_ts = int(end.timestamp())
+        timestamps = np.random.randint(start_ts, end_ts, size)
+        return [datetime.fromtimestamp(ts).strftime("%Y-%m-%dT%H:%M:%S") for ts in timestamps]
+
+    def generate_batch(batch_size, start_date, end_date):
+        cids = [str(uuid.uuid4()) for _ in range(batch_size)]
+        cdates = random_date(start_date, end_date, batch_size)
+        fns = [fake.first_name() for _ in range(batch_size)]
+        lns = [fake.last_name() for _ in range(batch_size)]
+        emails = [f"{fn.lower()}.{ln.lower()}{random.randint(1,99999)}@example{random.randint(1,99999)}.com" for fn, ln in zip(fns, lns)]
+        phones = [fake.phone_number() for _ in range(batch_size)]
+        addrs = [fake.street_address() for _ in range(batch_size)]
+        cities = [fake.city() for _ in range(batch_size)]
+        countries = [fake.country() for _ in range(batch_size)]
+        dobs = [fake.date_of_birth(minimum_age=18, maximum_age=90).strftime("%Y-%m-%d") for _ in range(batch_size)]
+        actives = np.random.choice(["true", "false"], batch_size)
+        ctypes = np.random.choice(['Individual', 'Business'], batch_size)
+        luds = random_date_time(start_date, end_date, batch_size)
+        notes = [fake.sentence(nb_words=6) for _ in range(batch_size)]
+        return list(zip(cids, cdates, fns, lns, emails, phones, addrs, cities, countries, dobs, actives, ctypes, luds, notes))
+
+    def progress_reporter(total, queue):
+        while True:
+            item = queue.get()
+            if item is None:
+                break
+            count, elapsed_time = item
+            progress_percent = (count / total) * 100
+            if progress_percent > 0:  # Avoid division by zero
+                estimated_total_time = elapsed_time / (progress_percent / 100)
+                remaining_time_min = (estimated_total_time - elapsed_time) / 60
+                print(f"Progress: {progress_percent:.1f}% completed ({count}/{total} records), estimated finish in {remaining_time_min:.1f} minutes", file=sys.stdout)
+            else:
+                print(f"Progress: {progress_percent:.1f}% completed ({count}/{total} records), estimating time.", file=sys.stdout)
+            queue.task_done()
+
+    def generate_customers_csv(filename, num_records):
+        header = [
+            "CustomerId","CreateDate","FirstName","LastName","Email","PhoneNumber",
+            "Address","City","Country","DateOfBirth","IsActive","CustomerType",
+            "LastUpdateDate","Notes"
+        ]
+        start_date = datetime(2000,1,1)
+        end_date = datetime.now()
+
+        print(f"Info: Generating {num_records} customers to {filename}", file=sys.stdout)
+        batch_size = 5000  # Write 1000 rows at a time
+        progress_queue = Queue()
+        progress_thread = Thread(target=progress_reporter, args=(num_records, progress_queue), daemon=True)
+        progress_thread.start()
+
+        with open(filename, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+            processed = 0
+            start_time = time.time()
+            last_log_time = start_time
+            while processed < num_records:
+                current_batch_size = min(batch_size, num_records - processed)
+                batch = generate_batch(current_batch_size, start_date, end_date)
+                writer.writerows(batch)
+                processed += current_batch_size
+                current_time = time.time()
+                if current_time - last_log_time >= 5:
+                    progress_queue.put((processed, current_time - start_time))
+                    last_log_time = current_time
+
+        progress_queue.put((num_records, time.time() - start_time))  # Final progress
+        progress_queue.put(None)  # Signal thread to exit
+        progress_thread.join()
+        print(f"Info: Successfully generated {num_records} customers to {filename}", file=sys.stdout)
+
+    if __name__ == "__main__":
+        if len(sys.argv) != 3:
+            print("Usage: python generate_customers.py <output-file> <num-records>", file=sys.stderr)
+            sys.exit(1)
+        out_file = sys.argv[1]
+        try:
+            count = int(sys.argv[2])
+        except ValueError:
+            print(f"Error: Invalid record count: {sys.argv[2]}", file=sys.stderr)
+            sys.exit(1)
+        generate_customers_csv(out_file, count)

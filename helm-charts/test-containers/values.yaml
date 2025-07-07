@@ -1,13 +1,7 @@
 namespace: "affixzone-test-containers"
-testPvc: false
 dataset:
   mountPath: "/datasets"
   pvcName: "dataset-pvc"
-  files:
-    - name: customer
-      dataSize: 100000
-    - name: customer_tran
-      dataSize: 10000
 db:
   postgresql:
     install: true
@@ -24,9 +18,10 @@ db:
       name: "test"
       create: true
       import:
-        - name: customer
-          createScript: |            
-            CREATE TABLE {{ .name }} (
+        - tableName: customer100k
+          fileName: "customer100k.csv"
+          createScript: |
+            CREATE TABLE {{ .tableName }} (
               CustomerId       UUID        PRIMARY KEY,
               CreateDate       DATE        NOT NULL,
               FirstName        TEXT,
@@ -43,24 +38,25 @@ db:
               Notes            TEXT
             );
           loadScript: |
-            \copy customer
-              FROM '{{ .Values.dataset.mountPath }}/{{ .name }}.csv'
+            \copy {{ .tableName }}
+              FROM '{{ .Values.dataset.mountPath }}/{{ .fileName }}'
               WITH (FORMAT csv, HEADER true);
-        - name: customer_tran
+        - tableName: customer_tran
+          fileName: "customer_tran100m.csv"
           createScript: |            
-            CREATE TABLE {{ .name }} (
+            CREATE TABLE {{ .tableName }} (
               TransactionId    UUID        PRIMARY KEY,
-              CustomerId       UUID        REFERENCES customer(CustomerId),
+              CustomerId       UUID        REFERENCES customer100k(CustomerId),
               Amount           NUMERIC,
               TransactionDate  TIMESTAMP
             );
           loadScript: |
-            \copy customer_tran
-              FROM '{{ .Values.dataset.mountPath }}/{{ .name }}.csv'
+            \copy {{ .tableName }}
+              FROM '{{ .Values.dataset.mountPath }}/{{ .fileName }}'
               WITH (FORMAT csv, HEADER true);
 
   oracle:
-    install: true                    # turn on Oracle support
+    install: false                    # turn on Oracle support
     serviceName: "oracle-service"
     port: "1521"
     oracleServiceName: "FREEPDB1"
@@ -97,7 +93,7 @@ db:
             );
           loadScript: |
             LOAD DATA
-            INFILE '{{ .Values.dataset.mountPath }}/customer.csv'
+            INFILE '{{ .Values.dataset.mountPath }}/customer10k.csv'
             APPEND
             INTO TABLE customer
             FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
@@ -127,7 +123,7 @@ db:
             );
           loadScript: |
             LOAD DATA
-            INFILE '{{ .Values.dataset.mountPath }}/customer_tran.csv'
+            INFILE '{{ .Values.dataset.mountPath }}/customer_tran100m.csv'
             APPEND
             INTO TABLE customer_tran
             FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
@@ -204,7 +200,7 @@ kafka:
       password: "kafka"
   init: true
 minio:
-  install: true
+  install: false
   serviceName: "minio-service"
   port: 9000   # Default MinIO port, update if necessary
   testBucketName: "testbucket"
@@ -215,10 +211,10 @@ minio:
   init:
     testdata:
       importFiles:
-        - name: customer.csv
+        - name: customer10k.csv
           bucket: |
             {{ .Values.minio.testBucketName }}
-        - name: customer_tran.csv
+        - name: customer_tran100m.csv
           bucket: |
             {{ .Values.minio.testBucketName }}
 superset:

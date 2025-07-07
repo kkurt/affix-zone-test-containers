@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: customer-tran-generator-script
+  namespace: {{ .Values.namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-100"
+data:
+  customer-tran-generator-script.py: |-
+    #!/usr/bin/env python3
+    import csv, sys, os, time, uuid
+    import numpy as np
+    from datetime import datetime, timedelta
+    from threading import Thread
+    from queue import Queue
+
+    # Configuration from Helm values
+    MOUNT_PATH = "{{ .Values.dataset.mountPath }}"
+    CUSTOMER_CSV = os.environ['masterDsName']
+
+    def random_date(start, end, size):
+        start_ts = int(start.timestamp())
+        end_ts = int(end.timestamp())
+        timestamps = np.random.randint(start_ts, end_ts, size)
+        return [datetime.fromtimestamp(ts).strftime("%Y-%m-%dT%H:%M:%S") for ts in timestamps]
+
+    def generate_batch(customer_ids, batch_size, start_date, end_date):
+        tids = [str(uuid.uuid4()) for _ in range(batch_size)]
+        cids = np.random.choice(customer_ids, batch_size)
+        amounts = np.round(np.random.uniform(0.01, 10000.0, batch_size), 2)
+        tdates = random_date(start_date, end_date, batch_size)
+        return list(zip(tids, cids, amounts, tdates))
+
+    def progress_reporter(total, queue):
+        while True:
+            item = queue.get()
+            if item is None:
+                break
+            count, elapsed_time = item
+            progress_percent = (count / total) * 100
+            if progress_percent > 0:  # Avoid division by zero
+                estimated_total_time = elapsed_time / (progress_percent / 100)
+                remaining_time_min = (estimated_total_time - elapsed_time) / 60
+                print(f"Progress: {progress_percent:.1f}% completed ({count}/{total} records), estimated finish in {remaining_time_min:.1f} minutes", file=sys.stdout)
+            else:
+                print(f"Progress: {progress_percent:.1f}% completed ({count}/{total} records), estimating time.", file=sys.stdout)
+            queue.task_done()
+
+    # Validate existence of customer data
+    if not os.path.isfile(CUSTOMER_CSV):
+        print(f"Error: customer file not found at {CUSTOMER_CSV}", file=sys.stderr)
+        sys.exit(1)
+
+    # Read CustomerId values
+    customer_ids = []
+    with open(CUSTOMER_CSV, newline='') as cf:
+        reader = csv.DictReader(cf)
+        print(f"Info: Reading customer data from {CUSTOMER_CSV}", file=sys.stdout)
+        for row in reader:
+            cid = row.get("CustomerId")
+            if cid:
+                customer_ids.append(cid)
+        print(f"Info: Loaded {len(customer_ids)} customer IDs", file=sys.stdout)
+
+    if not customer_ids:
+        print("Error: no CustomerId values found in customer.csv", file=sys.stderr)
+        sys.exit(1)
+
+    # Command-line args: output file and record count
+    if len(sys.argv) != 3:
+        print("Usage: python generate_customer_tran.py <output-file> <num-records>", file=sys.stderr)
+        sys.exit(1)
+    out_file = sys.argv[1]
+    try:
+        count = int(sys.argv[2])
+    except ValueError:
+        print(f"Error: Invalid record count: {sys.argv[2]}", file=sys.stderr)
+        sys.exit(1)
+
+    # Generate transactions
+    start_date = datetime(2000, 1, 1)
+    end_date = datetime.now()
+    print(f"Info: Generating {count} transactions to {out_file}", file=sys.stdout)
+
+    batch_size = 5000  # Write 1000 rows at a time
+    progress_queue = Queue()
+    progress_thread = Thread(target=progress_reporter, args=(count, progress_queue), daemon=True)
+    progress_thread.start()
+
+    with open(out_file, 'w', newline='') as tf:
+        writer = csv.writer(tf)
+        writer.writerow(["TransactionId", "CustomerId", "Amount", "TransactionDate"])
+        processed = 0
+        start_time = time.time()
+        last_log_time = start_time
+        while processed < count:
+            current_batch_size = min(batch_size, count - processed)
+            batch = generate_batch(customer_ids, current_batch_size, start_date, end_date)
+            writer.writerows(batch)
+            processed += current_batch_size
+            current_time = time.time()
+            if current_time - last_log_time >= 5:
+                progress_queue.put((processed, current_time - start_time))
+                last_log_time = current_time
+
+    progress_queue.put((count, time.time() - start_time))  # Final progress
+    progress_queue.put(None)  # Signal thread to exit
+    progress_thread.join()
+    print(f"Info: Successfully generated {count} transactions to {out_file}", file=sys.stdout)

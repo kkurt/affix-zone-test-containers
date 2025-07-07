@@ -10,7 +10,7 @@ data:
     echo "Iceberg init-script started!"
 
     # Wait until the service is ready (if needed).
-    echo "Waiting for Apache Iceberg service to become available..."
+    echo "Waiting for Apache Iceberg service to become available."
     # Add any service-check logic here. For example, a curl check against an HTTP endpoint.
     sleep 5
 

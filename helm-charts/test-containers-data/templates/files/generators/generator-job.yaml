@@ -1,0 +1,84 @@
+{{- $root := . -}}
+{{- /* collect unique configMapNames */ -}}
+{{- $cmSet := dict -}}
+{{- range $root.Values.dataset.files -}}
+  {{- $_ := set $cmSet .configMapName true -}}
+{{- end -}}
+{{- $cms := keys $cmSet -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: generator-job
+  namespace: {{ .Values.namespace }}
+  annotations:
+    helm.sh/hook: pre-install, pre-upgrade
+    helm.sh/hook-weight: "-10"
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 100
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: generator
+          image: python:3.11-slim
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 4000m
+            limits:
+              memory: 4Gi
+              cpu: 4000m
+          env:
+            - name: FILES_JSON
+              value: {{ toJson .Values.dataset.files | quote }}
+            - name: MOUNT_PATH
+              value: {{ .Values.dataset.mountPath }}
+            - name : PYTHONUNBUFFERED
+              value: "1"
+          command:
+            - sh
+            - -c
+            - |
+              pip install faker numpy && \
+              python3 - << 'EOF'
+              import os, json, subprocess
+              mount = os.environ['MOUNT_PATH']
+              files = json.loads(os.environ['FILES_JSON'])
+              files.sort(key=lambda x: int(x.get('rank', 0)))
+              for f in files:
+                size = int(f.get('dataSize', 0))
+                if size <= 0:
+                  continue
+                cm = f['configMapName']
+                outfile = f['fileName']
+                # script file matches configMapName
+                script_name = cm if cm.endswith('.py') else cm + '.py'
+                script_path = os.path.join('/scripts', cm, script_name)
+                outpath = os.path.join(mount, outfile)
+                print(f"Generating {size} records via {script_path} to {outpath}.")
+                # inject dynamic master dataset env var if provided
+                env = os.environ.copy()
+                master_ds_name = f.get('masterDsName')
+                if master_ds_name:
+                  # use the masterDsName as the env var name and set its value to the corresponding file path
+                  env_val = os.path.join(mount, master_ds_name)
+                  env["masterDsName"] = env_val
+                subprocess.check_call(['python3', script_path, outpath, str(size)], env=env)
+              EOF
+          volumeMounts:
+              - name: data
+                mountPath: {{ .Values.dataset.mountPath }}
+{{- range $cm := $cms }}
+              - name: {{ $cm }}
+                mountPath: /scripts/{{ $cm }}
+{{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.dataset.pvcName }}
+{{- range $cm := $cms }}
+        - name: {{ $cm }}
+          configMap:
+            name: {{ $cm }}
+{{- end }}

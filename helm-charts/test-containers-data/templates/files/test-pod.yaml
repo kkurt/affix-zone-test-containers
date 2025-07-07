@@ -1,4 +1,4 @@
-{{- if .Values.testPvc }}
+{{- if .Values.testPod }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -15,10 +15,16 @@ spec:
           volumeMounts:
             - mountPath: /data
               name: dataset-pvc
+            - name: script
+              mountPath: /scripts
       volumes:
         - name: dataset-pvc
           persistentVolumeClaim:
             claimName: dataset-pvc
+        - name: script
+          configMap:
+            name: customer-generator-script
+
   backoffLimit: 0
   ttlSecondsAfterFinished: 10
 {{- end }}

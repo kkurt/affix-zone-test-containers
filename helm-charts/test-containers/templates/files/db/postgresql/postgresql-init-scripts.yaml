@@ -15,68 +15,55 @@ data:
     MASTER_DB=postgres
     DB_NAME={{ .Values.db.postgresql.testdb.name }}
 
-    # 1) wait for Postgres
-    for i in 1 2 3; do
-      if psql -U "$PGUSER" -p "$PGPORT" -d "$MASTER_DB" -c '\q' &>/dev/null; then break; fi
-      echo "Waiting for PostgreSQL… attempt $i/3"; sleep 1
-    done
-    echo "✔ PostgreSQL is ready."
-
-    # 2) create the test DB if missing
-    EXISTS=$(psql -tA -U "$PGUSER" -p "$PGPORT" -d "$MASTER_DB" \
-      -c "SELECT 1 FROM pg_database WHERE datname='$DB_NAME';")
-    if [ "$EXISTS" != "1" ]; then
+    # 1) Create database if needed
+    if psql -U "$PGUSER" -p "$PGPORT" -lqt | cut -d \| -f 1 | grep -qw "$DB_NAME"; then
+      echo "→ Database '$DB_NAME' already exists; skipping creation."
+    else
       echo "→ Creating database '$DB_NAME'…"
       psql -U "$PGUSER" -p "$PGPORT" -d "$MASTER_DB" \
         -c "CREATE DATABASE \"$DB_NAME\" OWNER \"$PGUSER\";"
-    else
-      echo "→ Database '$DB_NAME' already exists; skipping creation."
     fi
 
-    {{- /* bring in Helm context */ -}}
+    # bring in Helm context
     {{- $root := . }}
     {{- $imports := default (list) $root.Values.db.postgresql.testdb.import }}
     {{- $mount := $root.Values.dataset.mountPath }}
 
-    # 3) drop old tables in reverse order
+    # 2) Drop old tables in reverse order
     {{- if gt (len $imports) 0 }}
     echo "→ Dropping existing tables…"
     {{- range $imp := reverse $imports }}
-    echo "  • DROP TABLE IF EXISTS {{ $imp.name }} CASCADE"
+    echo "  • DROP TABLE IF EXISTS {{ $imp.tableName }} CASCADE"
     psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
-      -c "DROP TABLE IF EXISTS {{ $imp.name }} CASCADE;"
+      -c "DROP TABLE IF EXISTS {{ $imp.tableName }} CASCADE;"
     {{- end }}
-    echo "✔ All old tables dropped."
+    echo "  ✔ All old tables dropped."
     {{- end }}
 
-    # 4) loop over each dataset file
-    {{- range $file := $root.Values.dataset.files }}
-    {{- $count := $file.dataSize | int }}
-    {{- if gt $count 0 }}
-    FILE_PATH="{{ $mount }}/{{ $file.name }}.csv"
-    echo "→ processing '{{ $file.name }}' ({{ $count }} rows) from $FILE_PATH"
+    # 3) Create & load new tables
+    {{- if gt (len $imports) 0 }}
+    {{- range $imp := $imports }}
+    FILE_PATH="{{ $mount }}/{{ $imp.fileName }}"
+    if [ -s "$FILE_PATH" ]; then
+      echo "→ processing '{{ $imp.fileName }}' for table '{{ $imp.tableName }}' from $FILE_PATH"
 
-      {{- /* find and apply matching import block */}}
-      {{- range $imp := $imports }}
-      {{- if eq $imp.name $file.name }}
-      {{- /* build a context with both .name and top-level values */}}
-      {{- $ctx := dict "name" $imp.name "Values" $root.Values }}
+      {{- $ctx := dict "tableName" $imp.tableName "fileName" $imp.fileName "Values" $root.Values }}
+      echo "  • creating table '{{ $imp.tableName }}'…"
+      psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
+        -c "{{ tpl $imp.createScript $ctx | replace "\n" " " | trim }}"
 
-    echo "  • creating table '{{ $imp.name }}'…"
-    psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
-      -c "{{ tpl $imp.createScript $ctx | replace "\n" " " | trim }}"
+      echo "  • loading data into '{{ $imp.tableName }}'…"
+      psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
+        -c "{{ tpl $imp.loadScript  $ctx | replace "\n" " " | trim }}"
 
-    echo "  • loading '{{ $imp.name }}'…"
-    psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
-      -c "{{ tpl $imp.loadScript  $ctx | replace "\n" " " | trim }}"
+      echo "  ✔ import for '{{ $imp.tableName }}' completed."
+    else
+      echo "→ skipping '{{ $imp.fileName }}' (file not found or empty)"
+    fi
 
-    echo "  ✔ import for '{{ $imp.name }}' completed."
-      {{- end }}
-      {{- end }}
-
+    {{- end }}
     {{- else }}
-    echo "→ skipping '{{ $file.name }}' (0 rows)"
-    {{- end }}
+    echo "→ No import entries defined; skipping data import."
     {{- end }}
 
     echo "→ PostgreSQL init-script finished."
