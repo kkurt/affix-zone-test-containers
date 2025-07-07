@@ -16,4 +16,4 @@ dataset:
       dataSize: 100000000
       rank: 2
 script:
-  workers: 4
+  workers: 10

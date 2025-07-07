@@ -4,107 +4,86 @@ metadata:
   name: customer-tran-generator-script
   namespace: {{ .Values.namespace }}
   annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-100"
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "{{ mul 10 2 }}"
 data:
   customer-tran-generator-script.py: |-
     #!/usr/bin/env python3
-    import csv, sys, os, time, uuid
-    import numpy as np
+    import argparse
+    import csv
+    import multiprocessing as mp
+    import os
+    import uuid
+    import random
+    import time
     from datetime import datetime, timedelta
-    from threading import Thread
-    from queue import Queue
 
-    # Configuration from Helm values
-    MOUNT_PATH = "{{ .Values.dataset.mountPath }}"
-    CUSTOMER_CSV = os.environ['masterDsName']
+    def load_customer_ids(master_file):
+        with open(master_file, newline="") as f:
+            return [row[0] for row in csv.reader(f) if row[0] != 'id']
 
-    def random_date(start, end, size):
-        start_ts = int(start.timestamp())
-        end_ts = int(end.timestamp())
-        timestamps = np.random.randint(start_ts, end_ts, size)
-        return [datetime.fromtimestamp(ts).strftime("%Y-%m-%dT%H:%M:%S") for ts in timestamps]
+    def generate_transactions(customer_ids, count, start_date, end_date):
+        for _ in range(count):
+            yield [
+                str(uuid.uuid4()),
+                random.choice(customer_ids),
+                (start_date + (end_date - start_date) * random.random()).isoformat(),
+                round(random.uniform(10.0, 1000.0), 2)
+            ]
 
-    def generate_batch(customer_ids, batch_size, start_date, end_date):
-        tids = [str(uuid.uuid4()) for _ in range(batch_size)]
-        cids = np.random.choice(customer_ids, batch_size)
-        amounts = np.round(np.random.uniform(0.01, 10000.0, batch_size), 2)
-        tdates = random_date(start_date, end_date, batch_size)
-        return list(zip(tids, cids, amounts, tdates))
+    def write_chunk(worker_id, customer_ids, count, start_date, end_date, out_prefix):
+        start = time.time()
+        interval = max(1, count // 10)
+        temp_file = f"{out_prefix}.part{worker_id}"
+        with open(temp_file, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["transaction_id", "customer_id", "date", "amount"])
+            for i, row in enumerate(generate_transactions(customer_ids, count, start_date, end_date)):
+                writer.writerow(row)
+                if (i + 1) % interval == 0 or (i + 1) == count:
+                    elapsed = time.time() - start
+                    percent = (i + 1) * 100 / count
+                    eta = elapsed * (count / (i + 1) - 1)
+                    print(f"[Tran] Worker {worker_id}: {i+1}/{count} ({percent:.1f}%) elapsed {elapsed:.1f}s eta {eta:.1f}s")
+        return temp_file
 
-    def progress_reporter(total, queue):
-        while True:
-            item = queue.get()
-            if item is None:
-                break
-            count, elapsed_time = item
-            progress_percent = (count / total) * 100
-            if progress_percent > 0:  # Avoid division by zero
-                estimated_total_time = elapsed_time / (progress_percent / 100)
-                remaining_time_min = (estimated_total_time - elapsed_time) / 60
-                print(f"Progress: {progress_percent:.1f}% completed ({count}/{total} records), estimated finish in {remaining_time_min:.1f} minutes", file=sys.stdout)
-            else:
-                print(f"Progress: {progress_percent:.1f}% completed ({count}/{total} records), estimating time.", file=sys.stdout)
-            queue.task_done()
+    def merge_files(temp_files, final_file):
+        with open(final_file, "w", newline="") as fout:
+            first = True
+            for temp in temp_files:
+                with open(temp, "r") as fin:
+                    for line in fin:
+                        if first:
+                            fout.write(line)
+                        else:
+                            if not line.startswith("transaction_id,"):
+                                fout.write(line)
+                os.remove(temp)
+                first = False
+        print(f"[Tran] Merged {len(temp_files)} files into {final_file}")
 
-    # Validate existence of customer data
-    if not os.path.isfile(CUSTOMER_CSV):
-        print(f"Error: customer file not found at {CUSTOMER_CSV}", file=sys.stderr)
-        sys.exit(1)
+    if __name__ == "__main__":
+        parser = argparse.ArgumentParser(description="Generate transactions CSV in parallel with progress.")
+        parser.add_argument("output_file", help="Path to output CSV file")
+        parser.add_argument("count", type=lambda x: int(float(x)), help="Total number of records to generate")
+        parser.add_argument("--master", required=True, help="Path to master customer CSV")
+        parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers")
+        parser.add_argument("--start-date", type=lambda s: datetime.fromisoformat(s), default=(datetime.now()-timedelta(days=365)), help="Start of date range")
+        parser.add_argument("--end-date", type=lambda s: datetime.fromisoformat(s), default=datetime.now(), help="End of date range")
+        args = parser.parse_args()
 
-    # Read CustomerId values
-    customer_ids = []
-    with open(CUSTOMER_CSV, newline='') as cf:
-        reader = csv.DictReader(cf)
-        print(f"Info: Reading customer data from {CUSTOMER_CSV}", file=sys.stdout)
-        for row in reader:
-            cid = row.get("CustomerId")
-            if cid:
-                customer_ids.append(cid)
-        print(f"Info: Loaded {len(customer_ids)} customer IDs", file=sys.stdout)
+        customers = load_customer_ids(args.master)
+        total = args.count
+        workers = args.workers
+        chunk = total // workers
+        counts = [chunk + (1 if i < total % workers else 0) for i in range(workers)]
 
-    if not customer_ids:
-        print("Error: no CustomerId values found in customer.csv", file=sys.stderr)
-        sys.exit(1)
+        out_prefix = args.output_file
+        with mp.Pool(processes=workers) as pool:
+            parts = pool.starmap(
+                write_chunk,
+                [(i, customers, counts[i], args.start_date, args.end_date, out_prefix) for i in range(workers)]
+            )
 
-    # Command-line args: output file and record count
-    if len(sys.argv) != 3:
-        print("Usage: python generate_customer_tran.py <output-file> <num-records>", file=sys.stderr)
-        sys.exit(1)
-    out_file = sys.argv[1]
-    try:
-        count = int(sys.argv[2])
-    except ValueError:
-        print(f"Error: Invalid record count: {sys.argv[2]}", file=sys.stderr)
-        sys.exit(1)
-
-    # Generate transactions
-    start_date = datetime(2000, 1, 1)
-    end_date = datetime.now()
-    print(f"Info: Generating {count} transactions to {out_file}", file=sys.stdout)
-
-    batch_size = 5000  # Write 1000 rows at a time
-    progress_queue = Queue()
-    progress_thread = Thread(target=progress_reporter, args=(count, progress_queue), daemon=True)
-    progress_thread.start()
-
-    with open(out_file, 'w', newline='') as tf:
-        writer = csv.writer(tf)
-        writer.writerow(["TransactionId", "CustomerId", "Amount", "TransactionDate"])
-        processed = 0
-        start_time = time.time()
-        last_log_time = start_time
-        while processed < count:
-            current_batch_size = min(batch_size, count - processed)
-            batch = generate_batch(customer_ids, current_batch_size, start_date, end_date)
-            writer.writerows(batch)
-            processed += current_batch_size
-            current_time = time.time()
-            if current_time - last_log_time >= 5:
-                progress_queue.put((processed, current_time - start_time))
-                last_log_time = current_time
-
-    progress_queue.put((count, time.time() - start_time))  # Final progress
-    progress_queue.put(None)  # Signal thread to exit
-    progress_thread.join()
-    print(f"Info: Successfully generated {count} transactions to {out_file}", file=sys.stdout)
+        merge_files(parts, out_prefix)
+        print(f"Info: Successfully generated {total} transactions to {out_prefix}")
