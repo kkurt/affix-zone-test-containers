@@ -19,71 +19,141 @@ data:
     from datetime import datetime, timedelta
 
     def load_customer_ids(master_file):
-        with open(master_file, newline="") as f:
-            return [row[0] for row in csv.reader(f) if row[0] != 'id']
+        """
+        Load customer IDs from the master customer CSV.
+        Assumes first column is 'customer_id' header.
+        """
+        if not os.path.exists(master_file):
+            raise FileNotFoundError(f"Master file '{master_file}' does not exist")
+
+        customer_ids = []
+        try:
+            with open(master_file, newline='', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                if header is None:
+                    raise ValueError(f"Master file '{master_file}' is empty")
+
+                if header and header[0].lower() == 'customer_id':
+                    customer_ids = [row[0] for row in reader if row]
+                else:
+                    f.seek(0)
+                    customer_ids = [row[0] for row in reader if row]
+
+                if not customer_ids:
+                    raise ValueError(f"No valid customer IDs found in '{master_file}'")
+
+                return customer_ids
+        except Exception as e:
+            raise RuntimeError(f"Failed to load customer IDs from '{master_file}': {str(e)}")
 
     def generate_transactions(customer_ids, count, start_date, end_date):
+        """
+        Yield 'count' transactions, each referencing a random customer_id
+        from the provided list, with random amount and timestamp.
+        """
+        delta_seconds = (end_date - start_date).total_seconds()
         for _ in range(count):
-            yield [
-                str(uuid.uuid4()),
-                random.choice(customer_ids),
-                (start_date + (end_date - start_date) * random.random()).isoformat(),
-                round(random.uniform(10.0, 1000.0), 2)
-            ]
+            txn_id = str(uuid.uuid4())
+            cust_id = random.choice(customer_ids)
+            amount = round(random.uniform(10.0, 1000.0), 2)
+            rand_offset = random.uniform(0, delta_seconds)
+            timestamp = (start_date + timedelta(seconds=rand_offset)).isoformat()
+            yield [txn_id, cust_id, str(amount), timestamp]
 
     def write_chunk(worker_id, customer_ids, count, start_date, end_date, out_prefix):
-        start = time.time()
-        interval = max(1, count // 10)
+        """
+        Generate a chunk of transactions and write to a temporary part file.
+        """
+        start_time = time.time()
         temp_file = f"{out_prefix}.part{worker_id}"
-        with open(temp_file, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["transaction_id", "customer_id", "date", "amount"])
-            for i, row in enumerate(generate_transactions(customer_ids, count, start_date, end_date)):
+        interval = max(1, count // 10)
+        with open(temp_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f, quoting=csv.QUOTE_ALL, lineterminator='\n')
+            writer.writerow(['transaction_id', 'customer_id', 'amount', 'timestamp'])
+            for i, row in enumerate(generate_transactions(customer_ids, count, start_date, end_date), start=1):
                 writer.writerow(row)
-                if (i + 1) % interval == 0 or (i + 1) == count:
-                    elapsed = time.time() - start
-                    percent = (i + 1) * 100 / count
-                    eta = elapsed * (count / (i + 1) - 1)
-                    print(f"[Tran] Worker {worker_id}: {i+1}/{count} ({percent:.1f}%) elapsed {elapsed:.1f}s eta {eta:.1f}s")
+                if i % interval == 0 or i == count:
+                    elapsed = time.time() - start_time
+                    percent = i * 100.0 / count
+                    eta = elapsed * (count / i - 1)
+                    print(f"[Tran] Worker {worker_id}: {i}/{count} ({percent:.1f}%) elapsed {elapsed:.1f}s eta {eta:.1f}s")
         return temp_file
 
-    def merge_files(temp_files, final_file):
-        with open(final_file, "w", newline="") as fout:
-            first = True
-            for temp in temp_files:
-                with open(temp, "r") as fin:
-                    for line in fin:
-                        if first:
-                            fout.write(line)
-                        else:
-                            if not line.startswith("transaction_id,"):
-                                fout.write(line)
-                os.remove(temp)
-                first = False
-        print(f"[Tran] Merged {len(temp_files)} files into {final_file}")
+    def merge_files(input_files, output_file):
+        """
+        Merge all part files into the final output CSV.
+        """
+        total_lines = 0
+        for fname in input_files:
+            with open(fname, 'r', encoding='utf-8') as f:
+                total_lines += sum(1 for _ in f) - 1  # Subtract header row
+
+        processed = 0
+        with open(output_file, 'w', newline='', encoding='utf-8') as out:
+            writer = csv.writer(out, quoting=csv.QUOTE_ALL, lineterminator='\n')
+            writer.writerow(['transaction_id', 'customer_id', 'amount', 'timestamp'])
+            for fname in input_files:
+                with open(fname, 'r', encoding='utf-8') as f:
+                    next(f)  # Skip header from part file
+                    for line in f:
+                        out.write(line)
+                        processed += 1
+                        if processed % max(1, total_lines // 100) == 0 or processed == total_lines:
+                            print(f"\rMerging: {processed * 100.0 / total_lines:.2f}% complete", end='')
+        print("\nMerge complete.")
+        # Cleanup part files
+        for fname in input_files:
+            try:
+                os.remove(fname)
+            except OSError as e:
+                print(f"Warning: Failed to remove {fname}: {str(e)}")
 
     if __name__ == "__main__":
-        parser = argparse.ArgumentParser(description="Generate transactions CSV in parallel with progress.")
-        parser.add_argument("output_file", help="Path to output CSV file")
-        parser.add_argument("count", type=lambda x: int(float(x)), help="Total number of records to generate")
-        parser.add_argument("--master", required=True, help="Path to master customer CSV")
+        parser = argparse.ArgumentParser(
+            description="Generate transactions CSV in parallel, linking to existing customer IDs."
+        )
+        parser.add_argument("output_file", help="Path to output transactions CSV file")
+        parser.add_argument("count", type=lambda x: int(float(x)), help="Total number of transactions to generate")
+        parser.add_argument(
+            "--master", required=True,
+            help="Path to master customer CSV file (must contain a 'customer_id' column)"
+        )
         parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers")
-        parser.add_argument("--start-date", type=lambda s: datetime.fromisoformat(s), default=(datetime.now()-timedelta(days=365)), help="Start of date range")
-        parser.add_argument("--end-date", type=lambda s: datetime.fromisoformat(s), default=datetime.now(), help="End of date range")
+        parser.add_argument(
+            "--start-date",
+            type=lambda s: datetime.fromisoformat(s),
+            default=datetime.now() - timedelta(days=365),
+            help="Start of transaction timestamp range (ISO format)"
+        )
+        parser.add_argument(
+            "--end-date",
+            type=lambda s: datetime.fromisoformat(s),
+            default=datetime.now(),
+            help="End of transaction timestamp range (ISO format)"
+        )
         args = parser.parse_args()
 
-        customers = load_customer_ids(args.master)
-        total = args.count
-        workers = args.workers
-        chunk = total // workers
-        counts = [chunk + (1 if i < total % workers else 0) for i in range(workers)]
+        try:
+            # Load customer IDs to ensure referential integrity
+            customers = load_customer_ids(args.master)
+            print(f"Info: Loaded {len(customers)} customer IDs from {args.master}")
 
-        out_prefix = args.output_file
-        with mp.Pool(processes=workers) as pool:
-            parts = pool.starmap(
-                write_chunk,
-                [(i, customers, counts[i], args.start_date, args.end_date, out_prefix) for i in range(workers)]
-            )
+            total = args.count
+            workers = max(1, min(args.workers, mp.cpu_count()))  # Cap workers at CPU count
+            chunk = total // workers
+            counts = [chunk + (1 if i < total % workers else 0) for i in range(workers)]
 
-        merge_files(parts, out_prefix)
-        print(f"Info: Successfully generated {total} transactions to {out_prefix}")
+            out_prefix = args.output_file
+            with mp.Pool(processes=workers) as pool:
+                parts = pool.starmap(
+                    write_chunk,
+                    [(i, customers, counts[i], args.start_date, args.end_date, out_prefix)
+                     for i in range(workers)]
+                )
+
+            merge_files(parts, out_prefix)
+            print(f"Info: Successfully generated {total} transactions to {out_prefix}")
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            exit(1)

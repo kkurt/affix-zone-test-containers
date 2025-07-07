@@ -22,20 +22,20 @@ db:
           fileName: "customer100k.csv"
           createScript: |
             CREATE TABLE {{ .tableName }} (
-              CustomerId       UUID        PRIMARY KEY,
-              CreateDate       DATE        NOT NULL,
-              FirstName        TEXT,
-              LastName         TEXT,
-              Email            TEXT        UNIQUE,
-              PhoneNumber      TEXT,
-              Address          TEXT,
-              City             TEXT,
-              Country          TEXT,
-              DateOfBirth      DATE,
-              IsActive         BOOLEAN,
-              CustomerType     TEXT,
-              LastUpdateDate   TIMESTAMP,
-              Notes            TEXT
+              customer_id       UUID        PRIMARY KEY,
+              create_date       DATE        NOT NULL,
+              first_name        TEXT,
+              last_name         TEXT,
+              rmail            TEXT        UNIQUE,
+              phone_number      TEXT,
+              address          TEXT,
+              city             TEXT,
+              country          TEXT,
+              date_of_birth      DATE,
+              active         BOOLEAN,
+              customer_type     TEXT,
+              lastU_update_date   TIMESTAMP,
+              notes            TEXT
             );
           loadScript: |
             \copy {{ .tableName }}
@@ -45,10 +45,10 @@ db:
           fileName: "customer_tran100m.csv"
           createScript: |            
             CREATE TABLE {{ .tableName }} (
-              TransactionId    UUID        PRIMARY KEY,
-              CustomerId       UUID        REFERENCES customer100k(CustomerId),
-              Amount           NUMERIC,
-              TransactionDate  TIMESTAMP
+              transaction_id    UUID        PRIMARY KEY,
+              customer_id       UUID        REFERENCES customer100k(customer_id),
+              amount           NUMERIC,
+              transaction_date  TIMESTAMP
             );
           loadScript: |
             \copy {{ .tableName }}

@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: "postgresql"
-  namespace: {{ .Values.namespace}}
+  namespace: {{ .Values.namespace }}
   labels:
     app: "postgres"
 spec:
@@ -24,6 +24,10 @@ spec:
           env:
             - name: POSTGRESQL_PASSWORD
               value: "{{ .Values.db.postgresql.users.root.password }}"
+            - name: POSTGRESQL_PORT_NUMBER
+              value: "{{ .Values.db.postgresql.port }}"
+            - name: ALLOW_EMPTY_PASSWORD
+              value: "no"
           ports:
             - name: postgresql
               containerPort: {{ .Values.db.postgresql.port }}
@@ -33,9 +37,11 @@ spec:
               readOnly: false
             - name: postgresql-init-scripts
               mountPath: /docker-entrypoint-initdb.d
-            - mountPath: /{{ .Values.dataset.mountPath }}
-              name: dataset-pvc
-
+            - name: dataset-pvc
+              mountPath: /{{ .Values.dataset.mountPath }}
+            - name: postgresql-pg-hba-file
+              mountPath: /bitnami/postgresql/conf/pg_hba.conf
+              subPath: pg_hba.conf
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -49,7 +55,7 @@ spec:
         - name: postgresql-pg-hba-file
           configMap:
             name: postgresql-pg-hba-config
-            defaultMode: 0755
+            defaultMode: 0644
             items:
               - key: pg_hba.conf
                 path: pg_hba.conf

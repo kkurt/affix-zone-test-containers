@@ -14,26 +14,61 @@ data:
     import multiprocessing as mp
     import os
     import uuid
+    from datetime import datetime, timedelta
     import time
+    import random
+    import numpy as np
     from faker import Faker
 
+    fake = Faker()
+    start_date = datetime(2000, 1, 1)
+    end_date = datetime.now()
+
     def generate_record(_):
-        faker = Faker()
+        customer_id = str(uuid.uuid4())
+        create_date = fake.date_between(start_date='-3y', end_date='today')
+        first_name = fake.first_name()
+        last_name = fake.last_name()
+        email = f"{first_name.lower()}.{last_name.lower()}{random.randint(1,99999)}@example{random.randint(1,99999)}.com"
+        phone_number = fake.phone_number()
+        address = fake.street_address()
+        city = fake.city()
+        country = fake.country()
+        date_of_birth = fake.date_of_birth(minimum_age=18, maximum_age=90).isoformat()
+        is_active = random.choice([True, False])
+        customer_type = random.choice(['Retail', 'Corporate', 'VIP', 'Standard'])
+        last_update_date = fake.date_time_between(start_date=create_date, end_date='now')
+        notes = fake.sentence(nb_words=6).replace('\n', ' ').replace('\r', '')  # Remove newlines
+        create_date_str = create_date.isoformat()
+        last_update_date_str = last_update_date.strftime("%Y-%m-%d %H:%M:%S")
         return [
-            str(uuid.uuid4()),
-            faker.name(),
-            faker.email(),
-            faker.address().replace("\n", " "),
-            faker.date_between(start_date='-5y', end_date='today').isoformat()
+            customer_id,
+            create_date_str,
+            first_name,
+            last_name,
+            email,
+            phone_number,
+            address,
+            city,
+            country,
+            date_of_birth,
+            str(is_active).lower(),  # Convert boolean to lowercase string
+            customer_type,
+            last_update_date_str,
+            notes
         ]
 
     def write_chunk(worker_id, count, out_prefix):
         start = time.time()
         interval = max(1, count // 10)
         temp_file = f"{out_prefix}.part{worker_id}"
-        with open(temp_file, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["id", "name", "email", "address", "signup_date"])
+        with open(temp_file, "w", newline='', encoding='utf-8') as f:
+            writer = csv.writer(f, quoting=csv.QUOTE_ALL, lineterminator='\n')
+            writer.writerow([
+                "customer_id", "create_date", "first_name", "last_name", "email",
+                "phone_number", "address", "city", "country", "date_of_birth",
+                "is_active", "customer_type", "last_update_date", "notes"
+            ])
             for i in range(count):
                 writer.writerow(generate_record(i))
                 if (i + 1) % interval == 0 or (i + 1) == count:
@@ -43,20 +78,35 @@ data:
                     print(f"[Customer] Worker {worker_id}: {i+1}/{count} ({percent:.1f}%) elapsed {elapsed:.1f}s eta {eta:.1f}s")
         return temp_file
 
-    def merge_files(temp_files, final_file):
-        with open(final_file, "w", newline="") as fout:
-            first = True
-            for temp in temp_files:
-                with open(temp, "r") as fin:
-                    for line in fin:
-                        if first:
-                            fout.write(line)
-                        else:
-                            if not line.startswith("id,"):
-                                fout.write(line)
-                os.remove(temp)
-                first = False
-        print(f"[Customer] Merged {len(temp_files)} files into {final_file}")
+    def merge_files(input_files, output_file):
+        total_lines = 0
+        for f in input_files:
+            with open(f, 'r', encoding='utf-8') as infile:
+                total_lines += sum(1 for _ in infile) - 1  # Subtract header row
+
+        processed = 0
+        with open(output_file, 'w', newline='', encoding='utf-8') as outfile:
+            writer = csv.writer(outfile, quoting=csv.QUOTE_ALL, lineterminator='\n')
+            writer.writerow([
+                "customer_id", "create_date", "first_name", "last_name", "email",
+                "phone_number", "address", "city", "country", "date_of_birth",
+                "is_active", "customer_type", "last_update_date", "notes"
+            ])
+            for f in input_files:
+                with open(f, 'r', encoding='utf-8') as infile:
+                    next(infile)  # Skip header
+                    for line in infile:
+                        outfile.write(line)
+                        processed += 1
+                        if processed % max(1, total_lines // 100) == 0 or processed == total_lines:
+                            percent = (processed / total_lines) * 100
+                            print(f"\rMerging: {percent:.2f}% complete", end="")
+        print("\nMerge complete.")
+        for f in input_files:
+            try:
+                os.remove(f)
+            except OSError as e:
+                print(f"Warning: Failed to remove {f}: {str(e)}")
 
     if __name__ == "__main__":
         parser = argparse.ArgumentParser(description="Generate customers CSV in parallel with progress.")
@@ -65,14 +115,18 @@ data:
         parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers")
         args = parser.parse_args()
 
-        total = args.count
-        workers = args.workers
-        chunk = total // workers
-        counts = [chunk + (1 if i < total % workers else 0) for i in range(workers)]
+        try:
+            total = args.count
+            workers = max(1, min(args.workers, mp.cpu_count()))  # Cap workers at CPU count
+            chunk = total // workers
+            counts = [chunk + (1 if i < total % workers else 0) for i in range(workers)]
 
-        out_prefix = args.output_file
-        with mp.Pool(processes=workers) as pool:
-            parts = pool.starmap(write_chunk, [(i, counts[i], out_prefix) for i in range(workers)])
+            out_prefix = args.output_file
+            with mp.Pool(processes=workers) as pool:
+                parts = pool.starmap(write_chunk, [(i, counts[i], out_prefix) for i in range(workers)])
 
-        merge_files(parts, out_prefix)
-        print(f"Info: Successfully generated {total} customers to {out_prefix}")
+            merge_files(parts, out_prefix)
+            print(f"Info: Successfully generated {total} customers to {out_prefix}")
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            exit(1)

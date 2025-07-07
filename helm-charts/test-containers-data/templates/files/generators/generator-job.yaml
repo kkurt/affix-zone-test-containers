@@ -15,23 +15,16 @@ spec:
   template:
     spec:
       restartPolicy: Never
-      resources:
-        limits:
-          memory: "4Gi"
-          cpu: "8"
-        requests:
-          memory: "1Gi"
-          cpu: "2"
       containers:
         - name: {{ .configMapName }}
-          image: python:3.9-slim
+          image: python:3.11-slim
           env:
             - name: PYTHONUNBUFFERED
               value: "1"
           command: ["/bin/sh", "-c"]
           args:
             - >
-              pip install Faker && exec python3 /scripts/{{ .configMapName }}/{{ .configMapName }}.py \
+              pip install Faker numpy && exec python3 /scripts/{{ .configMapName }}/{{ .configMapName }}.py \
                 "{{ $.Values.dataset.mountPath }}/{{ .fileName }}" \
                 "{{ .dataSize }}" \
                 --workers "{{ $.Values.script.workers }}"{{ if .masterDsName }} \
