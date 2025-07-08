@@ -8,6 +8,13 @@ data:
     #!/usr/bin/env bash
     set -euo pipefail
 
+    echo "→ Tuning PostgreSQL for bulk load"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET synchronous_commit = off;"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET full_page_writes = off;"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET maintenance_work_mem = '512MB';"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET checkpoint_timeout = '30min';"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "SELECT pg_reload_conf();"
+
     echo "→ PostgreSQL init-script starting…"
     export PGPASSWORD={{ .Values.db.postgresql.users.root.password }}
     PGUSER={{ .Values.db.postgresql.users.root.username }}
@@ -65,6 +72,13 @@ data:
     {{- else }}
     echo "→ No import entries defined; skipping data import."
     {{- end }}
+
+    echo "→ Restoring original settings"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM RESET synchronous_commit;"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM RESET full_page_writes;"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM RESET maintenance_work_mem;"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM RESET checkpoint_timeout;"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "SELECT pg_reload_conf();"
 
     echo "→ PostgreSQL init-script finished."
 {{- end }}
