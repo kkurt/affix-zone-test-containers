@@ -13,7 +13,7 @@ dataset:
     - configMapName: customer-tran-generator-script
       fileName: "customer_tran100m.csv"
       masterDsName: "customer100k.csv"
-      dataSize: 100000000
+      dataSize: 100000
       rank: 2
 script:
   workers: 16

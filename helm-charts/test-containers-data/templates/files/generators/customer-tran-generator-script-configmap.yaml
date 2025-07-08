@@ -13,6 +13,7 @@ data:
     import csv
     import multiprocessing as mp
     import os
+    from pathlib import Path
     import uuid
     import random
     import time
@@ -20,104 +21,78 @@ data:
 
     def load_customer_ids(master_file):
         """
-        Load customer IDs from the master customer CSV.
-        Assumes first column is 'customer_id' header.
+        Read and return a list of customer IDs from either:
+         - a single CSV (with or without header), or
+         - a directory of CSV parts (all files ending in .csv).
         """
-        if not os.path.exists(master_file):
-            raise FileNotFoundError(f"Master file '{master_file}' does not exist")
+        path = Path(master_file)
+        if path.is_dir():
+            csv_files = sorted(path.glob("*.csv"))
+            if not csv_files:
+                raise RuntimeError(f"No CSV files found in directory '{master_file}'")
+        else:
+            csv_files = [path]
 
         customer_ids = []
-        try:
-            with open(master_file, newline='', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                header = next(reader, None)
-                if header is None:
-                    raise ValueError(f"Master file '{master_file}' is empty")
-
-                if header and header[0].lower() == 'customer_id':
-                    customer_ids = [row[0] for row in reader if row]
-                else:
-                    f.seek(0)
-                    customer_ids = [row[0] for row in reader if row]
-
-                if not customer_ids:
-                    raise ValueError(f"No valid customer IDs found in '{master_file}'")
-
-                return customer_ids
-        except Exception as e:
-            raise RuntimeError(f"Failed to load customer IDs from '{master_file}': {str(e)}")
+        for f in csv_files:
+            try:
+                with open(f, 'r', encoding='utf-8') as infile:
+                    reader = csv.reader(infile)
+                    header = next(reader, None)
+                    if header and header[0].lower() == 'customer_id':
+                        for row in reader:
+                            if row:
+                                customer_ids.append(row[0])
+                    else:
+                        infile.seek(0)
+                        for row in reader:
+                            if row:
+                                customer_ids.append(row[0])
+            except Exception as e:
+                raise RuntimeError(f"Failed to load IDs from '{f}': {e}")
+        if not customer_ids:
+            raise RuntimeError(f"No valid customer IDs found in '{master_file}'")
+        return customer_ids
 
     def generate_transactions(customer_ids, count, start_date, end_date):
-        """
-        Yield 'count' transactions, each referencing a random customer_id
-        from the provided list, with random amount and timestamp.
-        """
         delta_seconds = (end_date - start_date).total_seconds()
         for _ in range(count):
             txn_id = str(uuid.uuid4())
             cust_id = random.choice(customer_ids)
             amount = round(random.uniform(10.0, 1000.0), 2)
-            rand_offset = random.uniform(0, delta_seconds)
-            timestamp = (start_date + timedelta(seconds=rand_offset)).isoformat()
+            offset = random.uniform(0, delta_seconds)
+            timestamp = (start_date + timedelta(seconds=offset)).isoformat()
             yield [txn_id, cust_id, str(amount), timestamp]
 
-    def write_chunk(worker_id, customer_ids, count, start_date, end_date, out_prefix):
-        """
-        Generate a chunk of transactions and write to a temporary part file.
-        """
+    def write_chunk(worker_id, customer_ids, count, start_date, end_date):
         start_time = time.time()
-        temp_file = f"{out_prefix}.part{worker_id}"
+
+
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+        part_file = dir_path / f"{base_name}_part{worker_id}{ext}"
         interval = max(1, count // 10)
-        with open(temp_file, 'w', newline='', encoding='utf-8') as f:
+        with open(part_file, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f, quoting=csv.QUOTE_ALL, lineterminator='\n')
             writer.writerow(['transaction_id', 'customer_id', 'amount', 'timestamp'])
-            for i, row in enumerate(generate_transactions(customer_ids, count, start_date, end_date), start=1):
-                writer.writerow(row)
-                if i % interval == 0 or i == count:
-                    elapsed = time.time() - start_time
-                    percent = i * 100.0 / count
-                    eta = elapsed * (count / i - 1)
-                    print(f"[Tran] Worker {worker_id}: {i}/{count} ({percent:.1f}%) elapsed {elapsed:.1f}s eta {eta:.1f}s")
-        return temp_file
+            for i, record in enumerate(generate_transactions(customer_ids, count, start_date, end_date)):
+                if i and i % interval == 0:
+                    pct = (i / count) * 100
+                    print(f"\rWorker {worker_id}: {pct:.2f}% complete", end="")
+                writer.writerow(record)
 
-    def merge_files(input_files, output_file):
-        """
-        Merge all part files into the final output CSV.
-        """
-        total_lines = 0
-        for fname in input_files:
-            with open(fname, 'r', encoding='utf-8') as f:
-                total_lines += sum(1 for _ in f) - 1  # Subtract header row
-
-        processed = 0
-        with open(output_file, 'w', newline='', encoding='utf-8') as out:
-            writer = csv.writer(out, quoting=csv.QUOTE_ALL, lineterminator='\n')
-            writer.writerow(['transaction_id', 'customer_id', 'amount', 'timestamp'])
-            for fname in input_files:
-                with open(fname, 'r', encoding='utf-8') as f:
-                    next(f)  # Skip header from part file
-                    for line in f:
-                        out.write(line)
-                        processed += 1
-                        if processed % max(1, total_lines // 100) == 0 or processed == total_lines:
-                            print(f"\rMerging: {processed * 100.0 / total_lines:.2f}% complete", end='')
-        print("\nMerge complete.")
-        # Cleanup part files
-        for fname in input_files:
-            try:
-                os.remove(fname)
-            except OSError as e:
-                print(f"Warning: Failed to remove {fname}: {str(e)}")
+        print(f"\rWorker {worker_id}: 100.00% complete in {time.time() - start_time:.2f}s")
+        return str(part_file)
 
     if __name__ == "__main__":
         parser = argparse.ArgumentParser(
             description="Generate transactions CSV in parallel, linking to existing customer IDs."
         )
-        parser.add_argument("output_file", help="Path to output transactions CSV file")
+        parser.add_argument("output_file", help="Path to output transactions CSV file (will become a directory)")
         parser.add_argument("count", type=lambda x: int(float(x)), help="Total number of transactions to generate")
         parser.add_argument(
             "--master", required=True,
-            help="Path to master customer CSV file (must contain a 'customer_id' column)"
+            help="Path to master customer CSV file or directory of CSV parts"
         )
         parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers")
         parser.add_argument(
@@ -132,28 +107,34 @@ data:
             default=datetime.now(),
             help="End of transaction timestamp range (ISO format)"
         )
-        args = parser.parse_args()
 
+        args = parser.parse_args()
         try:
-            # Load customer IDs to ensure referential integrity
+            # load IDs from either single CSV or directory of parts
             customers = load_customer_ids(args.master)
             print(f"Info: Loaded {len(customers)} customer IDs from {args.master}")
 
-            total = args.count
-            workers = max(1, min(args.workers, mp.cpu_count()))  # Cap workers at CPU count
-            chunk = total // workers
-            counts = [chunk + (1 if i < total % workers else 0) for i in range(workers)]
+            total   = args.count
+            workers = max(1, min(args.workers, mp.cpu_count()))
+            chunk   = total // workers
+            counts  = [chunk + (1 if i < total % workers else 0) for i in range(workers)]
 
             out_prefix = args.output_file
+
+            out_path  = Path(out_prefix)
+            base_name = out_path.stem
+            ext       = out_path.suffix
+            dir_path  = out_path.parent / out_path.name
+
             with mp.Pool(processes=workers) as pool:
                 parts = pool.starmap(
                     write_chunk,
-                    [(i, customers, counts[i], args.start_date, args.end_date, out_prefix)
+                    [(i, customers, counts[i], args.start_date, args.end_date)
                      for i in range(workers)]
                 )
 
-            merge_files(parts, out_prefix)
-            print(f"Info: Successfully generated {total} transactions to {out_prefix}")
+            # no merge: all parts live under the output directory
+            print(f"Info: Successfully generated {total} transactions into {Path(out_prefix).with_name(Path(out_prefix).stem)}")
         except Exception as e:
-            print(f"Error: {str(e)}")
+            print(f"Error: {e}")
             exit(1)

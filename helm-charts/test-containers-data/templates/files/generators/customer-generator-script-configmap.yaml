@@ -1,3 +1,4 @@
+# customer-generator-script-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -13,6 +14,7 @@ data:
     import csv
     import multiprocessing as mp
     import os
+    from pathlib import Path
     import uuid
     from datetime import datetime, timedelta
     import time
@@ -52,7 +54,7 @@ data:
             city,
             country,
             date_of_birth,
-            str(is_active).lower(),  # Convert boolean to lowercase string
+            str(is_active).lower(),
             customer_type,
             last_update_date_str,
             notes
@@ -61,7 +63,8 @@ data:
     def write_chunk(worker_id, count, out_prefix):
         start = time.time()
         interval = max(1, count // 10)
-        temp_file = f"{out_prefix}.part{worker_id}"
+        dir_path.mkdir(parents=True, exist_ok=True)
+        temp_file = dir_path / f"{base_name}_part{worker_id}{ext}"
         with open(temp_file, "w", newline='', encoding='utf-8') as f:
             writer = csv.writer(f, quoting=csv.QUOTE_ALL, lineterminator='\n')
             writer.writerow([
@@ -70,21 +73,20 @@ data:
                 "is_active", "customer_type", "last_update_date", "notes"
             ])
             for i in range(count):
-                writer.writerow(generate_record(i))
-                if (i + 1) % interval == 0 or (i + 1) == count:
-                    elapsed = time.time() - start
-                    percent = (i + 1) * 100 / count
-                    eta = elapsed * (count / (i + 1) - 1)
-                    print(f"[Customer] Worker {worker_id}: {i+1}/{count} ({percent:.1f}%) elapsed {elapsed:.1f}s eta {eta:.1f}s")
-        return temp_file
+                if i and i % interval == 0:
+                    pct = (i / count) * 100
+                    print(f"\rWorker {worker_id}: {pct:.2f}% complete", end="")
+                record = generate_record(i)
+                writer.writerow(record)
+        print(f"\rWorker {worker_id}: 100.00% complete in {time.time() - start:.2f}s")
+        return str(temp_file)
 
     def merge_files(input_files, output_file):
+        # (left unused)
         total_lines = 0
         for f in input_files:
             with open(f, 'r', encoding='utf-8') as infile:
-                total_lines += sum(1 for _ in infile) - 1  # Subtract header row
-
-        processed = 0
+                total_lines += sum(1 for _ in infile) - 1
         with open(output_file, 'w', newline='', encoding='utf-8') as outfile:
             writer = csv.writer(outfile, quoting=csv.QUOTE_ALL, lineterminator='\n')
             writer.writerow([
@@ -94,39 +96,40 @@ data:
             ])
             for f in input_files:
                 with open(f, 'r', encoding='utf-8') as infile:
-                    next(infile)  # Skip header
+                    next(infile)
                     for line in infile:
                         outfile.write(line)
-                        processed += 1
-                        if processed % max(1, total_lines // 100) == 0 or processed == total_lines:
-                            percent = (processed / total_lines) * 100
-                            print(f"\rMerging: {percent:.2f}% complete", end="")
-        print("\nMerge complete.")
         for f in input_files:
-            try:
-                os.remove(f)
-            except OSError as e:
-                print(f"Warning: Failed to remove {f}: {str(e)}")
+            try: os.remove(f)
+            except OSError: pass
 
     if __name__ == "__main__":
         parser = argparse.ArgumentParser(description="Generate customers CSV in parallel with progress.")
         parser.add_argument("output_file", help="Path to output CSV file")
         parser.add_argument("count", type=lambda x: int(float(x)), help="Total number of records to generate")
         parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers")
+
         args = parser.parse_args()
+        # Build output directory for parallel parts
+        out_path = Path(args.output_file)
+        base_name = out_path.stem
+        ext       = out_path.suffix
+        dir_path  = out_path.parent / out_path.name   # → “…/customer100k.csv”
+        dir_path.mkdir(parents=True, exist_ok=True)
+
 
         try:
-            total = args.count
-            workers = max(1, min(args.workers, mp.cpu_count()))  # Cap workers at CPU count
-            chunk = total // workers
-            counts = [chunk + (1 if i < total % workers else 0) for i in range(workers)]
+            total   = args.count
+            workers = max(1, min(args.workers, mp.cpu_count()))
+            chunk   = total // workers
+            counts  = [chunk + (1 if i < total % workers else 0) for i in range(workers)]
 
             out_prefix = args.output_file
             with mp.Pool(processes=workers) as pool:
                 parts = pool.starmap(write_chunk, [(i, counts[i], out_prefix) for i in range(workers)])
 
-            merge_files(parts, out_prefix)
-            print(f"Info: Successfully generated {total} customers to {out_prefix}")
+            # no merge: parts are in {dir_path}
+            print(f"Info: Successfully generated {total} customers into {dir_path}")
         except Exception as e:
             print(f"Error: {str(e)}")
             exit(1)
