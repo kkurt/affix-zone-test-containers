@@ -2,6 +2,7 @@ namespace: "affixzone-test-containers"
 dataset:
   mountPath: "/datasets"
   pvcName: "dataset-pvc"
+  loadParallelism: 16
 db:
   postgresql:
     install: true

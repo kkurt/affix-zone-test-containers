@@ -22,15 +22,28 @@ spec:
           securityContext:
             runAsUser: 0
           env:
+            - name: PGPORT
+              value: "{{ .Values.db.postgresql.port }}"
+            - name: PGUSER
+              value: "{{ .Values.db.postgresql.users.root.username }}"
             - name: POSTGRESQL_PASSWORD
               value: "{{ .Values.db.postgresql.users.root.password }}"
-            - name: POSTGRESQL_PORT_NUMBER
-              value: "{{ .Values.db.postgresql.port }}"
+            - name: DB_NAME
+              value: "{{ .Values.db.postgresql.testdb.name }}"
             - name: ALLOW_EMPTY_PASSWORD
               value: "no"
+            - name: PGLOAD_PARALLEL
+              value: '{{ .Values.dataset.loadParallelism | default "$(nproc)" }}'
           ports:
             - name: postgresql
               containerPort: {{ .Values.db.postgresql.port }}
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
           volumeMounts:
             - name: data
               mountPath: /bitnami/postgresql
