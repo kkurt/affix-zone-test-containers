@@ -39,23 +39,29 @@ spec:
               containerPort: {{ .Values.db.postgresql.port }}
           resources:
             requests:
-              cpu: "2"
-              memory: "4Gi"
+              cpu: "4"
+              memory: "32Gi"
             limits:
               cpu: "4"
-              memory: "8Gi"
+              memory: "32Gi"
           volumeMounts:
+            - name: postgresql-config
+              mountPath: /bitnami/postgresql/conf/postgresql.conf
+              subPath: postgresql.conf
             - name: data
               mountPath: /bitnami/postgresql
               readOnly: false
             - name: postgresql-init-scripts
               mountPath: /docker-entrypoint-initdb.d
             - name: dataset-pvc
-              mountPath: /{{ .Values.dataset.mountPath }}
+              mountPath: {{ .Values.dataset.mountPath }}
             - name: postgresql-pg-hba-file
               mountPath: /bitnami/postgresql/conf/pg_hba.conf
               subPath: pg_hba.conf
       volumes:
+        - name: postgresql-config
+          configMap:
+            name: postgresql-config
         - name: data
           persistentVolumeClaim:
             claimName: postgresql-pvc

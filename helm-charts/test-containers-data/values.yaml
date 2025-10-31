@@ -7,13 +7,28 @@ dataset:
   clearAll: false
   files:
     - configMapName: customer-generator-script
-      fileName: "customer100k.csv"
+      fileName: "customer_100k.csv"
       dataSize: 100000
       rank: 1
     - configMapName: customer-tran-generator-script
-      fileName: "customer_tran100m.csv"
-      masterDsName: "customer100k.csv"
-      dataSize: 100000000
+      fileName: "customer_tran_100k.csv"
+      masterDsName: "customer_100k.csv"
+      dataSize: 100000
       rank: 2
+    - configMapName: customer-tran-generator-script
+      fileName: "customer_tran_1m.csv"
+      masterDsName: "customer_100k.csv"
+      dataSize: 1000000
+      rank: 2
+    - configMapName: customer-tran-generator-script
+      fileName: "customer_tran_10m.csv"
+      masterDsName: "customer_100k.csv"
+      dataSize: 10000000
+      rank: 3
+    - configMapName: customer-tran-generator-script
+      fileName: "customer_tran_100m.csv"
+      masterDsName: "customer_100k.csv"
+      dataSize: 100000000
+      rank: 3
 script:
   workers: 16

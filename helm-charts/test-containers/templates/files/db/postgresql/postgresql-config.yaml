@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgresql-config
+data:
+  postgresql.conf: |
+    # ==============================
+    # Memory Settings
+    # ==============================
+    shared_buffers = '8GB'
+    effective_cache_size = '24GB'
+    work_mem = '32MB'                    # per operation
+    maintenance_work_mem = '1GB'         # for index creation/VACUUM
+
+    # ==============================
+    # WAL & Checkpoint Tuning
+    # ==============================
+    wal_buffers = '16MB'
+    max_wal_size = '4GB'
+    min_wal_size = '1GB'
+    checkpoint_timeout = '30min'
+    checkpoint_completion_target = 0.9
+    synchronous_commit = off
+    full_page_writes = off
+
+    # ==============================
+    # Parallelism
+    # ==============================
+    max_parallel_workers = 4
+    max_parallel_workers_per_gather = 2
+
+    # ==============================
+    # Miscellaneous
+    # ==============================
+    wal_writer_delay = '250ms'
+    autovacuum = off
+    listen_addresses = '*'

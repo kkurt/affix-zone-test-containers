@@ -3,99 +3,133 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: postgresql-init-scripts
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "{{ mul 10 3 }}"
 data:
-  init-db.sh: |
+  init-db.sh: |-
     #!/usr/bin/env bash
     set -euo pipefail
 
+    # ── Export credentials & settings ─────────────────────────────────────────
+    export PGPASSWORD="{{ .Values.db.postgresql.users.root.password }}"
+    export PGUSER="{{ .Values.db.postgresql.users.root.username }}"
+    export PGPORT="{{ .Values.db.postgresql.port }}"
+    export PGHOST="{{ .Values.db.postgresql.host }}"
+    export DB_NAME="{{ .Values.db.postgresql.testdb.name }}"
+
+
+
     echo "→ PostgreSQL init-script starting…"
-    export PGPASSWORD={{ .Values.db.postgresql.users.root.password }}
-    PGUSER={{ .Values.db.postgresql.users.root.username }}
-    PGPORT={{ .Values.db.postgresql.port }}
-    PGHOST={{ .Values.db.postgresql.host }}
-    DB_NAME={{ .Values.db.postgresql.testdb.name }}
 
-    # Determine parallel copy jobs
-    PARALLEL="${PGLOAD_PARALLEL:-$(nproc)}"
-
-    # bring in Helm context
     {{- $root := . }}
     {{- $imports := default (list) $root.Values.db.postgresql.testdb.import }}
     {{- $mount := $root.Values.dataset.mountPath }}
 
     # 1) Create database if needed
-    if psql -U "$PGUSER" -p "$PGPORT" -lqt | cut -d \| -f 1 | grep -qw "$DB_NAME"; then
+    if psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -lqt | cut -d '|' -f 1 | grep -qw "$DB_NAME"; then
       echo "→ Database '$DB_NAME' already exists; skipping creation."
     else
       echo "→ Creating database '$DB_NAME'…"
-      psql -U "$PGUSER" -p "$PGPORT" -d "postgres" \
+      psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "postgres" \
         -c "CREATE DATABASE \"$DB_NAME\" OWNER \"$PGUSER\";"
     fi
 
-    # 2) Drop old tables in reverse order
     {{- if gt (len $imports) 0 }}
+    # 2) Drop old tables in reverse order
     echo "→ Dropping existing tables…"
     {{- range $imp := reverse $imports }}
-    psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
+    psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
       -c "DROP TABLE IF EXISTS {{ $imp.tableName }} CASCADE;"
     {{- end }}
     echo "  ✔ All old tables dropped."
-    {{- end }}
 
 
     echo "→ Tuning PostgreSQL for bulk load"
-    psql -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET synchronous_commit = off;"
-    psql -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET full_page_writes = off;"
-    psql -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET maintenance_work_mem = '512MB';"
-    psql -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET checkpoint_timeout = '30min';"
-    psql -U "$PGUSER" -d "$DB_NAME" -c "SELECT pg_reload_conf();"
-
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET synchronous_commit = off;"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET full_page_writes = off;"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET maintenance_work_mem = '2GB';"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM SET checkpoint_timeout = '30min';"
+    psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "SELECT pg_reload_conf();"
 
     # 3) Create & load new tables
-    {{- if gt (len $imports) 0 }}
     echo "→ Creating & loading new tables…"
+      TABLES_TOTAL={{ len $imports }}
+      TABLE_INDEX=0
+      echo "  • total tables to import: $TABLES_TOTAL"
     {{- range $imp := $imports }}
-    IMPORT_PATH="{{ $mount }}/{{ $imp.fileName }}"
-    TABLE="{{ $imp.tableName }}"
-    {{- $ctx := dict "tableName" $imp.tableName "fileName" $imp.fileName "Values" $root.Values }}
-    CREATE_SQL="{{ tpl $imp.createScript $ctx | replace "\n" " " | trim }}"
-    LOAD_SQL="{{ tpl $imp.loadScript $ctx | replace "\n" " " | trim }}"
-
+      # set path and table before reporting
+      IMPORT_PATH="{{ $mount }}/{{ $imp.fileName }}"
+      TABLE="{{ $imp.tableName }}"
+      TABLE_INDEX=$((TABLE_INDEX+1))
+      PERCENT_TABLE=$((TABLE_INDEX * 100 / TABLES_TOTAL))
+      echo "  • (${PERCENT_TABLE}%) Importing table ${TABLE_INDEX}/${TABLES_TOTAL}: '${TABLE}'"
+      {{- $ctx := dict "tableName" $imp.tableName "fileName" $imp.fileName "Values" $root.Values }}
+      CREATE_SQL="{{ tpl $imp.createScript $ctx | replace "\n" " " | trim }}"
+      LOAD_SQL="{{ tpl $imp.loadScript $ctx | replace "\n" " " | trim }}"
     if [ -d "$IMPORT_PATH" ]; then
       echo "→ loading directory '$IMPORT_PATH' for table '$TABLE'"
       echo "  • creating table '$TABLE'…"
-      psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "$CREATE_SQL"
+      psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "$CREATE_SQL"
 
+      psql -h "$PGHOST" -U "$PGUSER" -d "$DB_NAME" -c "ALTER TABLE $TABLE SET UNLOGGED;"
+
+
+      # before your COPY loop: stage to local disk
+
+      #echo "  • staging CSVs to local disk"
+      #LOCAL_DIR="/tmp/data/${TABLE}"
+      #mkdir -p "$LOCAL_DIR"
+      #cp "$IMPORT_PATH"/*.csv "$LOCAL_DIR"/
+      #files=( "$LOCAL_DIR"/*.csv )
+      #total=${#files[@]}
+
+      # Progress tracking loop
       files=( "$IMPORT_PATH"/*.csv )
-      echo "  • parallel loading ${#files[@]} parts with $PARALLEL jobs…"
-
-      printf "%s\n" "${files[@]}" \
-      | xargs -P "$PARALLEL" -n1 -I{} bash -c "echo \"    → loading \$(basename '{}') into $TABLE\"; PGPASSWORD=\"$PGPASSWORD\" psql -h \"$PGHOST\" -U \"$PGUSER\" -p \"$PGPORT\" -d \"$DB_NAME\" -c \"\\copy $TABLE FROM '{}' CSV HEADER\""
-
-
+      total=${#files[@]}
+      echo "  • total parts to load: $total"
+      start_all=$(date +%s)
+      i=0
+      for f in "${files[@]}"; do
+        i=$((i+1))
+        part=$(basename "$f")
+        echo "    → Part $i/$total: loading '$part'"
+        start=$(date +%s)
+        PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "\copy $TABLE FROM '$f' CSV HEADER"
+        dur=$(( $(date +%s) - start ))
+        elapsed=$(( $(date +%s) - start_all ))
+        percent=$(( i * 100 / total ))
+        avg=$(( elapsed / i ))
+        rem=$(( avg * (total - i) ))
+        echo "      ✓ Completed part $i in ${dur}s; overall ${percent}% complete; ETA ${rem}s"
+      done
       echo "  ✔ import for '$TABLE' completed."
+
+    # after loading
+    echo "  • converting '${TABLE}' back to logged and rebuilding indexes"
+    psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" \
+    -c "ALTER TABLE $TABLE SET LOGGED;" \
+    -c "REINDEX TABLE $TABLE;"
 
     elif [ -s "$IMPORT_PATH" ]; then
       echo "→ processing file '$IMPORT_PATH' for table '$TABLE'"
       echo "  • creating table '$TABLE'…"
-      psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "$CREATE_SQL"
+      psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "$CREATE_SQL"
       echo "  • loading data into '$TABLE'…"
-      psql -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "$LOAD_SQL"
+      psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "$LOAD_SQL"
       echo "  ✔ import for '$TABLE' completed."
     else
       echo "→ skipping '$IMPORT_PATH' (not found or empty)"
     fi
     {{- end }}
-    {{- else }}
-    echo "→ No import entries defined; skipping data import."
     {{- end }}
 
     echo "→ Restoring original settings"
-    psql -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM RESET synchronous_commit;"
-    psql -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM RESET full_page_writes;"
-    psql -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM RESET maintenance_work_mem;"
-    psql -U "$PGUSER" -d "$DB_NAME" -c "ALTER SYSTEM RESET checkpoint_timeout;"
-    psql -U "$PGUSER" -d "$DB_NAME" -c "SELECT pg_reload_conf();"
+    psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "ALTER SYSTEM RESET synchronous_commit;"
+    psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "ALTER SYSTEM RESET full_page_writes;"
+    psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "ALTER SYSTEM RESET maintenance_work_mem;"
+    psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "ALTER SYSTEM RESET checkpoint_timeout;"
+    psql -h "$PGHOST" -U "$PGUSER" -p "$PGPORT" -d "$DB_NAME" -c "SELECT pg_reload_conf();"
 
     echo "→ PostgreSQL init-script finished."
 {{- end }}

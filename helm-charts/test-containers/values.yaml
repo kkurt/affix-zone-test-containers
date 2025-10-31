@@ -19,8 +19,8 @@ db:
       name: "test"
       create: true
       import:
-        - tableName: customer100k
-          fileName: "customer100k.csv"
+        - tableName: customer_100k
+          fileName: "customer_100k.csv"
           createScript: |
             CREATE TABLE {{ .tableName }} (
               customer_id       UUID        PRIMARY KEY,
@@ -42,12 +42,12 @@ db:
             \copy {{ .tableName }}
               FROM '{{ .Values.dataset.mountPath }}/{{ .fileName }}'
               WITH (FORMAT csv, HEADER true);
-        - tableName: customer_tran
-          fileName: "customer_tran100m.csv"
+        - tableName: customer_tran_1m
+          fileName: "customer_tran_1m.csv"
           createScript: |            
             CREATE TABLE {{ .tableName }} (
               transaction_id    UUID        PRIMARY KEY,
-              customer_id       UUID        REFERENCES customer100k(customer_id),
+              customer_id       UUID        REFERENCES customer_100k(customer_id),
               amount           NUMERIC,
               transaction_date  TIMESTAMP
             );
